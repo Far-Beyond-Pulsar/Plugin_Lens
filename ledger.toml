@@ -1,0 +1,117 @@
+# The lens plugin's rows of the SceneDB closure ledger (Pulsar-Native#1035):
+# its classes, GPU schemas, buffers, pass crates and call sites. A plugin owns
+# the rows of what it ships (Pulsar-Native#1606); `cargo test -p scene_inventory`
+# in a Pulsar-Native checkout recomputes every fact column, checks the human
+# columns, and fails on a missing, stale or misplaced row. The columns are
+# described in Pulsar-Native's crates/core/scene_inventory/ledger.toml.
+
+# ── Exposed component classes ───────────────────────────────────
+
+[[class]]
+name = "CameraLensComponent"
+category = "Rendering"
+world_registered = true
+own_gpu_columns = true
+owner = "lens_component::component"
+disposition = "render. The camera's lens as authored (optics, focus, focal surface, element stack, presets). Its derived rows are written on every insert, write, removal and replay: the LensComponent row at the instance row of camera_lenses, and its LensElementComponent rows in a compact per-lens block of lens_elements; removal zeroes both"
+target_contract = "Phase 6; 03-gpu-reflection-and-rendering.md"
+test = "plugins/vendor/lens/tests/camera_lens_rows.rs; plugins/vendor/lens/component/src/component.rs (tests)"
+status = "verified"
+
+# ── GPU-bearing schemas ─────────────────────────────────────────
+
+[[schema]]
+type = "CameraLensComponent"
+path = "lens_component::component::CameraLensComponent"
+buffers = []
+clears_on_remove = true
+releases_var_len = false
+registered = false
+writer = "none: the authored component has no column of its own; on every insert, write, removal and replay it derives its CameraLensSourceRow (camera_lens_sources, which the environment join publishes as camera_lenses) and its block of LensElementComponent rows (lens_elements), zeroed and freed on removal"
+owner = "lens_component::component"
+disposition = "keep: the camera's lens as authored; its GPU rows are the derived ones above"
+target_contract = "Phase 6; 03-gpu-reflection-and-rendering.md"
+test = "plugins/vendor/lens/tests/camera_lens_rows.rs; plugins/vendor/lens/component/src/component.rs (tests)"
+status = "verified"
+
+[[schema]]
+type = "CameraLensSourceRow"
+path = "lens_component::component::CameraLensSourceRow"
+buffers = ["camera_lens_sources"]
+clears_on_remove = true
+releases_var_len = false
+registered = true
+writer = "CameraLensComponent's derived GPU registration (the pass lens row, enabled from the authored flag), on every insert, write, removal and replay"
+owner = "lens_component::component"
+disposition = "keep: the environment join's camera_lenses input"
+target_contract = "Phase 6; 03-gpu-reflection-and-rendering.md"
+test = "plugins/vendor/lens/tests/camera_lens_rows.rs"
+status = "verified"
+
+[[schema]]
+type = "LensElementGpuRow"
+path = "lens_component::component::LensElementGpuRow"
+buffers = ["lens_elements"]
+clears_on_remove = true
+releases_var_len = false
+registered = true
+writer = "its component's GPU registration, on every insert, write, removal and replay"
+owner = "lens_component::component"
+disposition = "keep: the kind's own, moved with it into its plugin (plugin-migration.md Phases B and C)"
+target_contract = "Phase C; plugin-migration.md"
+test = "none: no test names this row; the owning plugin's suites cover its behaviour"
+status = "unverified"
+
+# ── GPU buffer keys ─────────────────────────────────────────────
+
+[[buffer]]
+key = "camera_lenses"
+producers = []
+consumers = ["helio-pass-lens"]
+owner = "helio-scene-derivations environment join (execution output, one row per component instance)"
+disposition = "keep: the camera's lens, matched to its view by view_id; the first enabled row wins and none disables the lens. The join copies each placed, enabled lens's camera_lens_sources row (a LensComponent), so the instance switch turns the lens off"
+target_contract = "Phase 6; 03-gpu-reflection-and-rendering.md"
+test = "plugins/vendor/lens/tests/camera_lens_rows.rs; crates/renderer/helio/crates/passes/3d/helio-pass-lens/src/tests.rs (resolve_matches_the_first_enabled_row_of_the_view)"
+status = "verified"
+
+[[buffer]]
+key = "lens_elements"
+producers = ["LensElementGpuRow"]
+consumers = ["helio-pass-lens"]
+owner = "helio-pass-lens (the packed LensElementComponent column)"
+disposition = "keep: the optical elements a lens stacks, addressed by the lens's element_first and element_count; rows of kind NONE are inert"
+target_contract = "Phase 6; 03-gpu-reflection-and-rendering.md"
+test = "crates/renderer/helio/crates/passes/3d/helio-pass-lens/src/tests.rs (split_diopter_focuses_each_half_and_the_seam_follows_the_aperture; diopters_stack_across_many_regions)"
+status = "verified"
+
+[[buffer]]
+key = "camera_lens_sources"
+producers = ["CameraLensSourceRow"]
+consumers = []
+owner = "lens_component::component"
+disposition = "keep: CameraLensComponent's pass row, derived on every write; the environment join reads it into camera_lenses"
+target_contract = "Phase 6; 03-gpu-reflection-and-rendering.md"
+test = "plugins/vendor/lens/tests/camera_lens_rows.rs"
+status = "verified"
+
+# ── Render pass crates ──────────────────────────────────────────
+
+[[pass]]
+crate = "helio-pass-lens"
+in_default_graph = false
+reads = ["camera_lenses", "lens_elements"]
+owner = "helio-pass-lens"
+disposition = "keep: reads the camera's lens rows and their elements (SceneDB-owned, matched by view id) and the scene depth; resolves focus on the GPU and publishes lens_color and lens_resolved. The camera owns the lens: post-process volumes do not blend it. Hosts register the columns; nothing authors the rows in the editor yet"
+target_contract = "Phase 6; 03-gpu-reflection-and-rendering.md"
+test = "crates/renderer/helio/crates/passes/3d/helio-pass-lens/src/tests.rs; plugins/installed/tests/render_acceptance.rs (every_pass_of_the_editor_graph_runs)"
+status = "verified"
+
+[[pass]]
+crate = "helio-pass-flare"
+in_default_graph = false
+reads = []
+owner = "helio-presets (mapping); helio-pass-flare (algorithm)"
+disposition = "keep: reads scene_lights, the scene join's output from each LightComponent's derived LightSourceRow and its owner transform (Phases 2 and 4)"
+target_contract = "Phase 6; 03-gpu-reflection-and-rendering.md"
+test = "plugins/installed/tests/render_acceptance.rs (meshes_and_lights_reach_the_frame_from_every_producer); plugins/installed/tests/render_acceptance.rs (every_pass_of_the_editor_graph_runs)"
+status = "verified"
