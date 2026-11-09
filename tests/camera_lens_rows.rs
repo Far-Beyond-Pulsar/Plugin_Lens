@@ -4,6 +4,9 @@
 //! `lens_elements`. Edits, presets, the instance switch and removal rewrite
 //! them. Needs a GPU adapter (lavapipe works); skips without one.
 
+// The plugin as a game links it: its root, with every registration.
+use lens_plugin as _;
+
 use std::sync::Arc;
 
 use engine_backend::scene::{SceneWorldExt, SpawnObject, attachments};

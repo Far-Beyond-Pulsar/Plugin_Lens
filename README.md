@@ -19,15 +19,24 @@ draw phases and api crates.
 
 | Crate | Path | What |
 |---|---|---|
-| `lens_component` | `component/` | Camera lenses (pulsar.lens): the camera lens component, its rows and presets, and the registrations of the plugin's Helio features (lens, flare) |
-| `lens_plugin` | `editor/` | Camera Lens (pulsar.lens): the editor plugin -- its metadata, over the plugin's component crate |
+| `lens_component` | `component/` | Camera lenses (pulsar.lens): the camera lens component, its rows, presets, scene rows and view overscan, and the plugin's Helio feature set (lens, flare) |
+| `lens_plugin` | `.` | Camera Lens (`pulsar.lens`): the plugin's root crate, the one place it registers everything it contributes (runtime registrations always, the editor's with `editor`) |
 | `lens-examples` | `examples/` | The lens plugin's standalone hosts on Helio: the lens showcase and the lens flare demo |
 | `helio-pass-flare` | `feature/flare/` | Helio render pass: image-based scene-linear lens response (ghosts, halo, glare, streaks) |
 | `helio-pass-lens` | `feature/lens/` | Helio render pass: physically based screen-space lens (thin-lens focus field and defocus) |
 | `helio-lens-optics` | `feature/optics/` | Pure-CPU real lens prescription tracer and lookup-table baker for the Helio lens pass |
 
-- **Runtime module** (what a game built for a project links): `lens_component`.
-- **Editor module** (what the editor links in addition): `lens_plugin`.
+The root crate (`lens_plugin`, this directory's package) is the one place
+the plugin registers what it contributes: its component classes, every
+registration that names an origin (`pulsar_plugins::origin!()`) and the
+descriptor. The other crates hold the code and register nothing but their
+types' own attachments, so `src/runtime.rs` lists everything the plugin
+brings (its editor registers nothing yet). The plugin's
+integration tests (`tests/`) link the root, as a game does.
+
+- **Runtime module** (what a game built for a project links): `lens_plugin`.
+- **Editor module** (what the editor links in addition): `lens_plugin` with its
+  `editor` feature (no editor UI yet).
 - **Requires**: nothing. A project enables or disables the plugin in its
   `Pulsar.toml` (`[plugins]`); disabled, the kind is absent and the frame
   draws without it.
@@ -45,8 +54,8 @@ only inside a Pulsar-Native checkout:
 ```bash
 git clone --recursive https://github.com/Far-Beyond-Pulsar/Pulsar-Native
 cd Pulsar-Native
-cargo check -p lens_component -p lens_plugin -p lens-examples -p helio-pass-flare -p helio-pass-lens -p helio-lens-optics --tests
-cargo test -p lens_component -p helio-pass-flare -p helio-pass-lens -p helio-lens-optics
+cargo check -p lens_plugin -p lens_component --features lens_plugin/editor -p lens-examples -p helio-pass-flare -p helio-pass-lens -p helio-lens-optics --tests
+cargo test -p lens_plugin -p lens_component -p helio-pass-flare -p helio-pass-lens -p helio-lens-optics
 ```
 
 Suites that render real frames need a GPU; CI leaves them out by name

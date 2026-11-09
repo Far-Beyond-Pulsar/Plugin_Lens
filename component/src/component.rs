@@ -35,7 +35,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use engine_class_derive::{engine_class, register_world_component};
+use engine_class_derive::{engine_class, world_component};
 use helio_pass_lens::{
     BundledLens, FOCUS_AUTO_POINT, FOCUS_MANUAL, LensElementRow, LensRegion, LensRow,
     MAX_LENS_ELEMENTS, ProjectionModel, bundled_rays, element_kind, ray_map::applied_overscan,
@@ -2459,7 +2459,7 @@ impl CameraLensComponent {
     }
 }
 
-#[register_world_component]
+#[world_component]
 impl CameraLensComponent {}
 
 /// The lens's script methods.
