@@ -1805,8 +1805,6 @@ impl helio_component::components::reflected_list::ReflectedListItem for LensElem
     }
 }
 
-helio_component::register_reflected_list_editor!(LensElementProps);
-
 lens_enum! {
     /// A named lens setup. `Custom` uses the fields below it; any other
     /// preset replaces the optics, tilt, curvature, iris and element stack
@@ -3872,15 +3870,5 @@ mod tests {
             }
         }
         assert!(checked > 10_000, "{checked}");
-    }
-
-    #[test]
-    fn element_lists_have_a_registered_editor() {
-        let id = std::any::TypeId::of::<Vec<LensElementProps>>();
-        assert!(
-            pulsar_reflection::inventory::iter::<pulsar_reflection::UiPropertyEditorHint>
-                .into_iter()
-                .any(|hint| hint.type_id == id)
-        );
     }
 }

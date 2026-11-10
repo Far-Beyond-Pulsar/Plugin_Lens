@@ -28,7 +28,7 @@ inventory::submit! {
         origin: pulsar_plugins::origin!(),
         name: "lens.rows",
         register_columns: lens_component::register_columns,
-        derivation: lens_component::derivation,
+        derivation: Some(lens_component::derivation),
     }
 }
 

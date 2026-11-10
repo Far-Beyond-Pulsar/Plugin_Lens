@@ -8,10 +8,9 @@ description = "Camera Lens (`pulsar.lens`): the plugin's root crate, the one pla
 autoexamples = false
 
 [features]
-# Nothing yet: the plugin registers no editor UI (the inspector edits
-# its component through reflected properties). Hosts turn it on with the
-# rest of the installed set's editor registrations.
-editor = []
+# The inspector's editor of the element stack (a reflected list). Hosts
+# turn it on with the rest of the installed set's editor registrations.
+editor = ["dep:ui_common"]
 
 [dependencies]
 # The plugin gate and the registrations' collection.
@@ -22,6 +21,8 @@ lens_component = { workspace = true }
 # The engine seams the plugin registers into.
 engine_backend = { path = "../../../crates/core/engine_backend", default-features = false, features = ["render"] }
 pulsar_world_registry = { workspace = true }
+# The editor's reflected list editor (with `editor`).
+ui_common = { workspace = true, optional = true }
 
 [dev-dependencies]
 # The plugin's integration tests (`tests/`): the plugin as a game links it.

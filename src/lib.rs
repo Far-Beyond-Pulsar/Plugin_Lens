@@ -12,8 +12,9 @@
 //! - [`runtime`]: what a game links. The component class, the Helio
 //!   features, the scene rows and the view overscan (how much wider than
 //!   its frame a lensed view renders).
-//! - The editor (with the `editor` feature) registers nothing: the inspector
-//!   edits a lens through its reflected properties.
+//! - [`editor`] (with the `editor` feature): the inspector's editor of the
+//!   element stack; the rest of a lens edits through its reflected
+//!   properties.
 //!
 //! Every registration names this crate as its origin
 //! (`pulsar_plugins::origin!()`), so the plugin gate skips all of them while
@@ -29,3 +30,6 @@ pulsar_plugins::installed!("pulsar-plugin.toml");
 pub use lens_component;
 
 pub mod runtime;
+
+#[cfg(feature = "editor")]
+pub mod editor;
