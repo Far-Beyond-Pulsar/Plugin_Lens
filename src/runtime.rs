@@ -1,44 +1,42 @@
 //! What the lens plugin registers for a game (and the editor): every
 //! runtime contribution, grouped by the engine seam it plugs into.
 
+use engine_backend::scene::{ClassSpec, ComponentsBuilder};
 use engine_backend::scene::helio_bridge::SceneRowsRegistration;
 use engine_backend::subsystems::render::{RenderFeatureRegistration, ViewOverscanRegistration};
 use lens_component::CameraLensComponent;
 
-// ── Component classes ───────────────────────────────────────────────────────
+/// Everything the plugin registers for a game (and the editor).
+pub(crate) fn build(p: &mut pulsar_plugins::PluginBuilder) {
+    // ── Component classes ───────────────────────────────────────────────────
 
-pulsar_world_registry::submit_world_component!(CameraLensComponent);
+    p.components().class::<CameraLensComponent>(ClassSpec::default());
 
-// ── Rendering ───────────────────────────────────────────────────────────────
+    // ── Rendering ───────────────────────────────────────────────────────────
 
-// The lens resolves the scene colour through the camera's optics after
-// anti-aliasing; the flare adds the lights' ghosts.
-inventory::submit! {
-    RenderFeatureRegistration {
-        origin: pulsar_plugins::origin!(),
+    // The lens resolves the scene colour through the camera's optics after
+    // anti-aliasing; the flare adds the lights' ghosts.
+    p.add(RenderFeatureRegistration {
+        origin: p.origin(),
         features: lens_component::render_features,
         configure: |config| config,
-    }
-}
+    });
 
-// The lenses' source and element rows and the join that publishes them as
-// the lens pass's `camera_lenses`.
-inventory::submit! {
-    SceneRowsRegistration {
-        origin: pulsar_plugins::origin!(),
+    // The lenses' source and element rows and the join that publishes them as
+    // the lens pass's `camera_lenses`.
+    p.add(SceneRowsRegistration {
+        origin: p.origin(),
         name: "lens.rows",
         register_columns: lens_component::register_columns,
         derivation: Some(lens_component::derivation),
-    }
-}
+    });
 
-// A lensed view renders wider than its frame; the lens pass crops it back.
-inventory::submit! {
-    ViewOverscanRegistration {
-        origin: pulsar_plugins::origin!(),
+    // A lensed view renders wider than its frame; the lens pass crops it back.
+    p.add(ViewOverscanRegistration {
+        origin: p.origin(),
         name: "lens.overscan",
         overscan: lens_component::camera_lens_view_overscan,
-    }
+    });
 }
 
 #[cfg(test)]
