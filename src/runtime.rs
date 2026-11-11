@@ -1,8 +1,8 @@
 //! What the lens plugin registers for a game (and the editor): every
 //! runtime contribution, grouped by the engine seam it plugs into.
 
-use engine_backend::scene::{ClassSpec, ComponentsBuilder};
 use engine_backend::scene::helio_bridge::SceneRowsRegistration;
+use engine_backend::scene::{ClassSpec, ComponentsBuilder};
 use engine_backend::subsystems::render::{RenderFeatureRegistration, ViewOverscanRegistration};
 use lens_component::CameraLensComponent;
 
@@ -10,7 +10,8 @@ use lens_component::CameraLensComponent;
 pub(crate) fn build(p: &mut pulsar_plugins::PluginBuilder) {
     // ── Component classes ───────────────────────────────────────────────────
 
-    p.components().class::<CameraLensComponent>(ClassSpec::default());
+    p.components()
+        .class::<CameraLensComponent>(ClassSpec::default());
 
     // ── Rendering ───────────────────────────────────────────────────────────
 
@@ -63,10 +64,9 @@ mod tests {
             .into_iter()
             .filter(|summary| summary.origin == pulsar_plugins::origin!())
             .collect();
-        assert!(
-            ours.iter()
-                .any(|summary| summary.category == "component.class")
-        );
+        assert!(ours
+            .iter()
+            .any(|summary| summary.category == "component.class"));
         for summary in &ours {
             assert_eq!(
                 pulsar_plugins::plugin_of(summary.origin).map(|plugin| plugin.id.as_str()),
