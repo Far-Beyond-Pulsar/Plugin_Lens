@@ -6,7 +6,14 @@ id = "pulsar.lens"
 name = "Camera Lens"
 description = "A camera's physically based lens: its component, presets, rows and the renderer features that resolve the image through it and draw its flare"
 enabled_by_default = true
-requires = []
+provides = [
+  { id = "pulsar.lens.rows", kind = "buffer", members = ["camera_lenses", "lens_elements"] },
+]
+# Optional: the lens flare runs without lights on the frame's stand-in.
+requires = [
+  { id = "pulsar.lights.rows", optional = true },
+  { id = "pulsar.lights.api", optional = true },
+]
 
 # The plugin's root crate (the package in this directory): the one place it
 # registers everything it contributes. A game links it without its `editor`
