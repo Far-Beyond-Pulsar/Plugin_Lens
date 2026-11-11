@@ -87,7 +87,7 @@ status = "verified"
 [[buffer]]
 key = "camera_lens_sources"
 producers = ["CameraLensSourceRow"]
-consumers = []
+consumers = ["lens_component"]
 owner = "lens_component::component"
 disposition = "keep: CameraLensComponent's pass row, derived on every write; the environment join reads it into camera_lenses"
 target_contract = "Phase 6; 03-gpu-reflection-and-rendering.md"
@@ -109,7 +109,7 @@ status = "verified"
 [[pass]]
 crate = "helio-pass-flare"
 in_default_graph = false
-reads = []
+reads = ["scene_lights"]
 owner = "helio-presets (mapping); helio-pass-flare (algorithm)"
 disposition = "keep: reads scene_lights, the scene join's output from each LightComponent's derived LightSourceRow and its owner transform (Phases 2 and 4)"
 target_contract = "Phase 6; 03-gpu-reflection-and-rendering.md"

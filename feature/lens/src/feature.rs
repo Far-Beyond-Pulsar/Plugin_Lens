@@ -19,6 +19,8 @@ impl Feature for LensFeature {
     fn register(&self, registrar: &mut FeatureRegistrar<'_>) {
         // What shader hot reload may swap without rebuilding the graph.
         registrar.swappable::<LensPass>();
+        registrar.consumes(crate::CAMERA_LENSES);
+        registrar.consumes(crate::LENS_ELEMENTS);
         registrar.node(
             pass_node(
                 "lens",

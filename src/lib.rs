@@ -6,7 +6,8 @@
 //! publishes `camera_lenses`; `helio-pass-flare`: the flare it drives),
 //! and `lens_component` (the SceneDB component, its rows, presets, script
 //! methods and view overscan). None of them registers a contribution; this
-//! crate imports them and submits their registrations, so this file and the
+//! crate imports them and registers them
+//! through its [`build`], so this file and the
 //! module below are the whole list of what the plugin brings:
 //!
 //! - [`runtime`]: what a game links. The component class, the Helio
@@ -17,7 +18,7 @@
 //!   properties.
 //!
 //! Every registration names this crate as its origin
-//! (`pulsar_plugins::origin!()`), so the plugin gate skips all of them while
+//! (`p.origin()`), so the plugin gate skips all of them while
 //! a project disables the plugin, and the plugin catalog lists them under
 //! `pulsar.lens`. Other plugins never depend on this crate; hosts reach it
 //! through the installed set or a generated game, a game without the
@@ -25,7 +26,12 @@
 
 // The plugin's descriptor (`pulsar-plugin.toml`): linking this crate installs
 // the plugin; a project enables it or not (`pulsar_plugins`).
-pulsar_plugins::installed!("pulsar-plugin.toml");
+pulsar_plugins::installed!("pulsar-plugin.toml", build);
+
+/// Everything the plugin registers.
+pub fn build(p: &mut pulsar_plugins::PluginBuilder) {
+    runtime::build(p);
+}
 
 pub use lens_component;
 
