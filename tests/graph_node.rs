@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use engine_backend::subsystems::render::helio_renderer::{pipelines, render_features};
 use helio::{DebugDrawState, PassBuildContext, RendererConfig};
-use helio_graph_asset::{validate, GraphAsset, NodeInstance, PinKind};
+use helio_graph_asset::{GraphAsset, NodeInstance, PinKind, validate};
 use pulsar_scenedb::gpu::{EngineGpuContext, GpuMirrorHandle, SceneGpuConfig, SceneGpuStore};
 
 const PLUGIN: &str = "pulsar.lens";
@@ -75,7 +75,7 @@ fn registry() -> helio_graph_asset::NodeRegistry {
 
 /// The deferred preset's graph over the registry.
 fn default_asset(registry: &helio_graph_asset::NodeRegistry) -> GraphAsset {
-    helio_presets::graphs::deferred_graph_asset_for(registry, &configured())
+    helio_presets::graphs::deferred_graph_asset(registry)
 }
 
 /// Compiles `asset` and counts, per node of [`NODES`], the passes of its type
@@ -131,7 +131,10 @@ fn the_plugin_registers_its_nodes_in_the_default_graph_order() {
             .get(kind)
             .unwrap_or_else(|| panic!("{kind} is registered"));
         assert_eq!(registry.feature_of(kind), Some(*feature), "{kind}");
-        assert!(node.generated, "{kind}: pins come from what the pass declares");
+        assert!(
+            node.generated,
+            "{kind}: pins come from what the pass declares"
+        );
         assert!(node.params.iter().any(|p| p.key == "enabled"), "{kind}");
         let at = asset
             .nodes
