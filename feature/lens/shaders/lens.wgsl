@@ -1,4 +1,6 @@
 //!use helio_prelude
+//!use lens_flare
+//!use lens_overrides
 
 // ── Physically based screen-space lens ───────────────────────────────────────
 //
@@ -61,6 +63,8 @@ struct LensRow {
     af_radius: f32,
     overscan: f32,
     _pad1: f32,
+    // `helio_lens_api::GpuLensFlare`, resolved with the lens.
+    flare: LensFlare,
 }
 
 struct ElementRow {
@@ -100,6 +104,8 @@ struct Resolved {
     spectral_samples: u32,
     aberration_flags: u32,
     overscan: f32,
+    flare: LensFlare,
+    overrides: LensOverrides,
 }
 
 // Persistent between frames: the autofocus position in dioptres.
@@ -159,6 +165,9 @@ struct Frame {
 // Baked lens prescriptions (prescriptions.rs): a directory, then per lens a
 // header and tables of f32 bits. Four zero words when the host has none.
 @group(0) @binding(30) var<storage, read> bank: array<u32>;
+// The blended overrides of volumes around the camera (`cs_resolve` only;
+// the identity where nothing publishes them): `helio_lens_api::LENS_OVERRIDES`.
+@group(0) @binding(31) var<storage, read> overrides_in: LensOverrides;
 
 // ── User element hooks ───────────────────────────────────────────────────────
 //
@@ -391,6 +400,27 @@ fn scene_distance(px: vec2<u32>, size: vec2<u32>) -> f32 {
     return helio_view_depth(cameras[0].proj, d);
 }
 
+// ── Overridden elements ──────────────────────────────────────────────────────
+
+// An element as the stack sees it: the blended overrides of volumes around the
+// camera applied to the artistic parameters they name (the natural vignette's
+// amount, a lateral aberration's first-order coefficient).
+fn element_with(e_in: ElementRow, ov: LensOverrides) -> ElementRow {
+    var e = e_in;
+    if e.kind == ELEMENT_NATURAL_VIGNETTE {
+        e.params[0] = clamp(lens_override_apply(ov.vignette_strength, e.params[0]), 0.0, 1.0);
+    } else if e.kind == ELEMENT_LATERAL_CA {
+        e.params[0] = lens_override_apply(ov.chromatic_aberration, e.params[0]);
+    }
+    return e;
+}
+
+// The `index`th element row, with this frame's overrides (`resolved` holds
+// them after `cs_resolve`).
+fn element_at(index: u32) -> ElementRow {
+    return element_with(elements[index], resolved.overrides);
+}
+
 // ── cs_resolve ───────────────────────────────────────────────────────────────
 
 var<workgroup> picked_row: atomic<u32>;
@@ -452,6 +482,9 @@ fn cs_resolve(@builtin(local_invocation_index) lid: u32) {
     if lid == 0u {
         resolve_lens(row, found, autofocus, size);
     }
+    // The ray map below reads the elements through the overrides just stored
+    // in `resolved`.
+    storageBarrier();
     workgroupBarrier();
 
     // The ray map's reach at the frame boundary, one sample per thread.
@@ -540,13 +573,15 @@ fn resolve_lens(row: LensRow, found: bool, autofocus: bool, size: vec2<u32>) {
         out.element_first = row.element_first;
         out.element_count = min(row.element_count, MAX_ELEMENTS);
         out.overscan = row_overscan(row);
+        out.flare = row.flare;
     }
+    out.overrides = overrides_in;
 
     // A prescription over the whole frame is the view's lens: its effective
     // focal length, and no wider an aperture than it was baked at.
     var full_frame_lens = NO_ROW;
     for (var i = 0u; i < out.element_count; i++) {
-        let e = elements[out.element_first + i];
+        let e = element_with(elements[out.element_first + i], overrides_in);
         if e.kind == ELEMENT_PRESCRIPTION && e.region_kind == REGION_FULL_FRAME && rx_header(e) != NO_ROW {
             full_frame_lens = rx_header(e);
             break;
@@ -561,7 +596,8 @@ fn resolve_lens(row: LensRow, found: bool, autofocus: bool, size: vec2<u32>) {
     // Focus in dioptres: manual follows the row; autofocus eases toward the
     // measured depth and holds where the point sees only sky.
     let focal_m = out.focal_length_mm * 1.0e-3;
-    var target_dpt = 1.0 / max(bounded(row.focus_distance_m, 0.0, MAX_DISTANCE, MAX_DISTANCE), focal_m * 1.001);
+    let manual_focus_m = lens_override_apply(overrides_in.focus_distance, row.focus_distance_m);
+    var target_dpt = 1.0 / max(bounded(manual_focus_m, 0.0, MAX_DISTANCE, MAX_DISTANCE), focal_m * 1.001);
     let has_history = state.valid != 0u;
     if autofocus {
         if count > 0.0 {
@@ -583,7 +619,7 @@ fn resolve_lens(row: LensRow, found: bool, autofocus: bool, size: vec2<u32>) {
     // Which stages the stack needs, so a plain lens pays for none of them.
     var natural = 0.0;
     for (var i = 0u; i < out.element_count; i++) {
-        let e = elements[out.element_first + i];
+        let e = element_with(elements[out.element_first + i], overrides_in);
         if e.kind >= ELEMENT_PROJECTION && e.kind <= ELEMENT_DOME_PORT {
             out.map_flags |= MAP_REMAP;
         }
@@ -834,7 +870,7 @@ fn focus_field(uv: vec2<f32>, size: vec2<f32>) -> FocusSample {
     var extra = 0.0;
     var transmission = 1.0;
     for (var i = 0u; i < resolved.element_count; i++) {
-        let e = elements[resolved.element_first + i];
+        let e = element_at(resolved.element_first + i);
         if e.kind == ELEMENT_DIOPTER {
             // A diopter is authored by the distance it brings into focus: its
             // power is whatever puts that distance in focus given the lens's
@@ -1153,7 +1189,7 @@ fn resolve_pupil(uv: vec2<f32>, size: vec2<f32>) -> Pupil {
         rx = find_prescription(q, make_ctx(resolved, vec2<u32>(size)));
     }
     for (var i = 0u; i < resolved.element_count; i++) {
-        let e = elements[resolved.element_first + i];
+        let e = element_at(resolved.element_first + i);
         if e.kind == ELEMENT_PUPIL {
             if region_weight(e, q) < 0.5 { continue; }
             let p = e.params;
@@ -1202,7 +1238,7 @@ fn resolve_pupil(uv: vec2<f32>, size: vec2<f32>) -> Pupil {
     let offset = (frame_uv(uv) - 0.5) * size;
     let reach = length(offset);
     if rx.index != NO_ROW {
-        let e = elements[resolved.element_first + rx.index];
+        let e = element_at(resolved.element_first + rx.index);
         let h = rx_header(e);
         shifts += rx.weight * vec3(
             bank_f(h + H_FOCUS_RED),
@@ -1676,7 +1712,7 @@ fn find_prescription(q: vec2<f32>, ctx: MapCtx) -> PrismSel {
     sel.weight = 0.0;
     if (ctx.flags & MAP_PRESCRIPTION) == 0u { return sel; }
     for (var i = 0u; i < ctx.count; i++) {
-        let e = elements[ctx.first + i];
+        let e = element_at(ctx.first + i);
         if e.kind == ELEMENT_PRESCRIPTION && rx_header(e) != NO_ROW {
             let w = region_weight(e, q);
             if w > 0.0 {
@@ -1945,7 +1981,7 @@ fn find_prism(q: vec2<f32>, ctx: MapCtx) -> PrismSel {
     sel.index = NO_ROW;
     sel.weight = 0.0;
     for (var i = 0u; i < ctx.count; i++) {
-        let e = elements[ctx.first + i];
+        let e = element_at(ctx.first + i);
         if e.kind == ELEMENT_PRISM {
             let w = region_weight(e, q);
             if w > 0.0 {
@@ -1967,7 +2003,7 @@ fn ray_map(q: vec2<f32>, t: f32, prism: u32, copy: u32, ctx: MapCtx) -> vec2<f32
     // Where a prescription covers, its map replaces the parametric lens maps.
     let rx = find_prescription(q, ctx);
     for (var i = 0u; i < ctx.count; i++) {
-        let e = elements[ctx.first + i];
+        let e = element_at(ctx.first + i);
         if e.kind == ELEMENT_PRESCRIPTION {
             if i == rx.index {
                 x = mix(x, rx_map(e, x, t, ctx), rx.weight);
@@ -2045,7 +2081,7 @@ fn boundary_reach(lid: u32, ctx: MapCtx, size: vec2<u32>) -> f32 {
     let q = (uv - 0.5) * vec2(aspect, 1.0);
     let prism = find_prism(q, ctx);
     var copies = 1u;
-    if prism.index != NO_ROW { copies = prism_count(elements[ctx.first + prism.index]); }
+    if prism.index != NO_ROW { copies = prism_count(element_at(ctx.first + prism.index)); }
     var reach = 1.0;
     for (var c = 0u; c < copies; c++) {
         let copy = select(NO_COPY, c, prism.index != NO_ROW);
@@ -2084,7 +2120,7 @@ fn transmission(q: vec2<f32>, ctx: MapCtx, size: vec2<u32>) -> vec3<f32> {
     // the natural and optical vignetting where a prescription covers.
     let rx = find_prescription(q, ctx);
     for (var i = 0u; i < ctx.count; i++) {
-        let e = elements[ctx.first + i];
+        let e = element_at(ctx.first + i);
         if (e.kind < ELEMENT_NATURAL_VIGNETTE || e.kind > ELEMENT_T_STOP_LOSS)
             && e.kind != ELEMENT_PRESCRIPTION && e.kind != ELEMENT_USER { continue; }
         var w = region_weight(e, q);
@@ -2258,7 +2294,7 @@ fn mapped_color(q: vec2<f32>, ctx: MapCtx, size: vec2<u32>) -> vec3<f32> {
     if prism.index == NO_ROW {
         return spectral_color(q, NO_ROW, NO_COPY, ctx, n, &ts, &ws, aspect);
     }
-    let e = elements[ctx.first + prism.index];
+    let e = element_at(ctx.first + prism.index);
     var copies = vec3(0.0);
     for (var c = 0u; c < prism_count(e); c++) {
         copies += prism_weight(e, c) * spectral_color(q, prism.index, c, ctx, n, &ts, &ws, aspect);
@@ -2537,7 +2573,7 @@ fn cs_ab_apply(@builtin(global_invocation_id) id: vec3<u32>) {
     var rx_psf: RxAnalysis;
     var rx_amount = 0.0;
     if rx.index != NO_ROW {
-        let e = elements[first + rx.index];
+        let e = element_at(first + rx.index);
         let h = rx_header(e);
         if (bank[h + H_FLAGS] & RX_PSF) != 0u {
             rx_amount = max(e.params[1], 0.0) * rx.weight;
@@ -2551,7 +2587,7 @@ fn cs_ab_apply(@builtin(global_invocation_id) id: vec3<u32>) {
     var variance_r = (rx_psf.sigma_r * px_per_mm * rx_amount) * (rx_psf.sigma_r * px_per_mm * rx_amount);
     var variance_t = (rx_psf.sigma_t * px_per_mm * rx_amount) * (rx_psf.sigma_t * px_per_mm * rx_amount);
     for (var i = 0u; i < count; i++) {
-        let e = elements[first + i];
+        let e = element_at(first + i);
         if e.kind != ELEMENT_ASTIGMATISM && e.kind != ELEMENT_CORNER_SOFTNESS { continue; }
         var w = region_weight(e, q);
         if rx.weight > 0.0 { w *= 1.0 - rx.weight; }
@@ -2585,7 +2621,7 @@ fn cs_ab_apply(@builtin(global_invocation_id) id: vec3<u32>) {
     var added = vec3(0.0);
     var transmitted = 1.0;
     for (var i = 0u; i < count; i++) {
-        let e = elements[first + i];
+        let e = element_at(first + i);
         if e.kind < ELEMENT_SPHERICAL_GLOW || e.kind > ELEMENT_DIRT { continue; }
         var w = region_weight(e, q);
         if rx.weight > 0.0 && e.kind == ELEMENT_COMA { w *= 1.0 - rx.weight; }

@@ -23,8 +23,9 @@
 //!   The block is freed, and its rows zeroed, when the component leaves its
 //!   object. A lens that is off has no elements to read.
 //!
-//! The lens is owned by the camera: no post-process volume blends it, and it
-//! is not gated by the owner's visibility.
+//! The lens is owned by the camera: a post-process volume may override only
+//! its artistic parameters (`helio_lens_api::overrides`), never its
+//! prescription or its flare, and it is not gated by the owner's visibility.
 //!
 //! A lens whose ray map looks past the frame (a fisheye, a barrel distortion)
 //! needs the camera to render a wider view. [`camera_lens_view_overscan`] gives
@@ -174,7 +175,7 @@ macro_rules! lens_enum {
 #[repr(C)]
 #[gpu(layout = packed, buffer = "camera_lens_sources")]
 pub struct CameraLensSourceRow {
-    /// The 96 bytes of the row, in six four-word groups (reflection
+    /// The 192 bytes of the row, in twelve four-word groups (reflection
     /// registers only these array shapes).
     #[gpu]
     pub words0: [u32; 4],
@@ -188,6 +189,18 @@ pub struct CameraLensSourceRow {
     pub words4: [u32; 4],
     #[gpu]
     pub words5: [u32; 4],
+    #[gpu]
+    pub words6: [u32; 4],
+    #[gpu]
+    pub words7: [u32; 4],
+    #[gpu]
+    pub words8: [u32; 4],
+    #[gpu]
+    pub words9: [u32; 4],
+    #[gpu]
+    pub words10: [u32; 4],
+    #[gpu]
+    pub words11: [u32; 4],
 }
 const _: () = assert!(std::mem::size_of::<CameraLensSourceRow>() == std::mem::size_of::<LensRow>());
 
@@ -2282,6 +2295,7 @@ pub const LENS_PRESETS: &[LensPresetData] = &[
 #[category("Focus", category_color = "#50C878")]
 #[category("Focal Surface", category_color = "#C080E0")]
 #[category("Elements", category_color = "#E07050")]
+#[category("Flare", category_color = "#E0B040")]
 #[serde(default)]
 pub struct CameraLensComponent {
     #[property(category = "Camera")]
@@ -2342,6 +2356,11 @@ pub struct CameraLensComponent {
     /// by a preset other than Custom.
     #[property(category = "Elements")]
     pub elements: Vec<LensElementProps>,
+    /// The lens's flare: ghosts, halo, glare, streaks and starburst from
+    /// everything bright in frame and from scene lights. Per camera; a
+    /// post-process volume cannot override it.
+    #[property(category = "Flare")]
+    pub flare: crate::flare::LensFlareProps,
 }
 
 impl Default for CameraLensComponent {
@@ -2369,6 +2388,7 @@ impl Default for CameraLensComponent {
             tilt_axis_deg: 0.0,
             field_curvature_dpt: 0.0,
             elements: Vec::new(),
+            flare: crate::flare::LensFlareProps::default(),
         }
     }
 }
@@ -2453,6 +2473,7 @@ impl CameraLensComponent {
         row.field_curvature = lens.field_curvature_dpt;
         row.aperture_blades = lens.aperture_blades;
         row.aperture_rotation = lens.aperture_rotation_deg.to_radians();
+        row.flare = lens.flare.to_row();
         (row, elements)
     }
 }

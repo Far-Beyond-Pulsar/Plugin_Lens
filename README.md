@@ -19,6 +19,7 @@ draw phases and api crates.
 
 | Crate | Path | What |
 |---|---|---|
+| `helio-lens-api` | `api/` | The lens's public contract: the flare settings the lens pass resolves per view and the blendable overrides (focus distance, vignette strength, chromatic aberration amount) volumes may contribute, with their WGSL |
 | `lens_component` | `component/` | Camera lenses (pulsar.lens): the camera lens component, its rows, presets, scene rows and view overscan, and the plugin's Helio feature set (lens, flare) |
 | `lens_plugin` | `.` | Camera Lens (`pulsar.lens`): the plugin's root crate, the one place it registers everything it contributes (runtime registrations always, the editor's with `editor`) |
 | `lens-examples` | `examples/` | The lens plugin's standalone hosts on Helio: the lens showcase and the lens flare demo |
@@ -54,8 +55,8 @@ only inside a Pulsar-Native checkout:
 ```bash
 git clone --recursive https://github.com/Far-Beyond-Pulsar/Pulsar-Native
 cd Pulsar-Native
-cargo check -p lens_plugin -p lens_component --features lens_plugin/editor -p lens-examples -p helio-pass-flare -p helio-pass-lens -p helio-lens-optics --tests
-cargo test -p lens_plugin -p lens_component -p helio-pass-flare -p helio-pass-lens -p helio-lens-optics
+cargo check -p lens_plugin -p lens_component --features lens_plugin/editor -p lens-examples -p helio-lens-api -p helio-pass-flare -p helio-pass-lens -p helio-lens-optics --tests
+cargo test -p lens_plugin -p lens_component -p helio-lens-api -p helio-pass-flare -p helio-pass-lens -p helio-lens-optics
 ```
 
 Suites that render real frames need a GPU; CI leaves them out by name

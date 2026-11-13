@@ -8,6 +8,8 @@ description = "A camera's physically based lens: its component, presets, rows an
 enabled_by_default = true
 provides = [
   { id = "pulsar.lens.rows", kind = "buffer", members = ["camera_lenses", "lens_elements"] },
+  # The flare settings and the blendable overrides other kinds' volumes publish.
+  { id = "pulsar.lens.api", kind = "api", members = ["helio-lens-api"], version = 1 },
 ]
 # Optional: the lens flare runs without lights on the frame's stand-in.
 requires = [

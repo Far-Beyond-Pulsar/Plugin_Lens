@@ -478,7 +478,17 @@ Two packed SceneDB components, read straight from GPU memory:
 | `LensComponent` | `camera_lenses` | `view_id` (u32 bits of the camera's `jitter_frame.w`); the first enabled row wins, none disables the lens |
 | `LensElementComponent` | `lens_elements` | rows `element_first .. element_first + element_count` of the owning lens (`element_count` is capped at 32; a `NONE` row is skipped) |
 
-The lens is owned by the camera. Post-process volumes do not blend it.
+The lens is owned by the camera. A post-process volume may override only the
+lens's artistic parameters through the lens's overrides contract
+(`helio_lens_api::overrides`, published as `lens_overrides`): the manual focus
+distance, the vignette strength (the amount of `NATURAL_VIGNETTE` elements)
+and the chromatic aberration amount (the first-order coefficient `D1` of
+`LATERAL_CA` elements). The blended result is affine in the lens's own value
+(`keep * value + add`), so the blender never reads the lens. The prescription
+(optics, elements, glass, flare) stays on the camera and never blends. The
+flare settings are the lens row's `flare` block (`helio_lens_api::GpuLensFlare`),
+resolved with the lens and published as `lens_flare_settings` for the flare
+pass.
 
 | `LensComponent` field | Meaning |
 | --- | --- |
@@ -552,8 +562,8 @@ FogCompositePass -> Transparent -> TSR/FXAA -> LensPass -> LensFlarePass -> Post
   holds the neutral 50 mm f/2.8, 36 mm, six-blade lens when the view has none, so
   consumers always have optics. `LensFlarePass` takes f-number, focal length,
   sensor width and the iris, and the natural falloff for analytic sources,
-  from it; post-process settings no longer carry them (nor chromatic
-  aberration or a lens vignette: both are the lens's).
+  from it; post-process settings no longer carry them (nor the flare
+  settings, chromatic aberration or a lens vignette: all are the lens's).
 - Records on the graphics encoder after its producers. The compute encoder is
   submitted before graphics and would sample the previous frame.
 - Hosts register the columns up front, like the other SceneDB rows:

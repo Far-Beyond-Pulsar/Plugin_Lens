@@ -13,18 +13,21 @@ participating medium, composited by `FogCompositePass`. See
 
 ## Where the settings live
 
-Lens settings are part of the shared post-process settings, not the light:
+The flare settings are the camera lens's (`helio_lens_api::GpuLensFlare`), not
+the light's and not post-process settings:
 
 | Author-facing | Runtime row | Resolution |
 | --- | --- | --- |
-| `CameraPostProcessComponent` (editor) | `helio_pass_postprocess::CameraPostProcessComponent`, matched by `view_id` | Camera baseline |
-| `PostProcessVolumeComponent` (editor) | `helio_pass_postprocess::PostProcessVolumeComponent` | Overrides by priority, weight and inward boundary fade, per override bit |
+| `CameraLensComponent.flare` (editor) | `helio_pass_lens::LensRow::flare`, matched by `view_id` | Per camera; never blended |
 
-`PostProcessVolumeBlendPass` resolves both on the GPU into the
-`postprocess_uniforms` buffer. This pass reads the 96-byte lens block at byte
-432 (`GpuLensResponse`); the prefix is opaque here.
+The lens pass resolves the view's lens (and its flare block) on the GPU and
+publishes the block as the `lens_flare_settings` uniform
+(`helio_lens_api::FLARE_SETTINGS`); this pass reads it. A view with no lens
+has an all-zero block, so no flare. A post-process volume cannot override the
+flare: it may override only the lens's focus distance, vignette strength and
+chromatic aberration amount (`helio_lens_api::overrides`).
 
-The camera's optics are not post-process settings. F-number, focal length,
+The camera's optics are not part of the flare block. F-number, focal length,
 sensor width and the iris (blades, rotation) come from the view's lens
 (`helio_pass_lens::LensComponent`) through the `lens_resolved` buffer the lens
 pass publishes, with a neutral 50 mm f/2.8, 36 mm, six-blade camera when the
@@ -89,8 +92,8 @@ FogCompositePass -> Transparent -> TSR/FXAA -> LensPass -> LensFlarePass -> Post
                                    (tsr_color | fxaa_color | fogged_hdr)
 ```
 
-- Reads `postprocess_uniforms` (≥528 bytes, UNIFORM), the optional
-  `lens_resolved` optics (a `ResolvedLens` storage buffer) and the configured
+- Reads `lens_flare_settings` (96 bytes, UNIFORM, published by the lens pass),
+  the optional `lens_resolved` optics (a `ResolvedLens` storage buffer) and the configured
   HDR input (`with_color_input`; the default graphs pass the lens pass's
   `lens_color`).
 - Writes `lens_output`: Rgba16Float at a quarter of the input resolution.
@@ -125,7 +128,7 @@ changes smoothness, not brightness.
 ## Validation
 
 `cargo test -p helio-pass-flare` runs the production WGSL on a GPU (an adapter
-is required; tests fail rather than skip): ABI offsets against the real
-`GpuPostProcessUniforms`, optics taken from the resolved lens, disabled/unbound clearing, threshold rejection,
+is required; tests fail rather than skip): the flare block against the
+lens contract (`helio_lens_api::GpuLensFlare`), optics taken from the resolved lens, disabled/unbound clearing, threshold rejection,
 glare energy bound and aperture normalization, ghost reflection across the
 optical axis, and anamorphic streak shape.

@@ -368,18 +368,13 @@ fn build_scene(
         &mut scene_db.world,
         make_material([0.3, 0.28, 0.25, 1.0], 0.4, 0.0, [0.0, 0.0, 0.0], 0.0),
     );
-    // Lens flare is camera optics, authored on the camera's post-process
-    // settings (view 0). It responds to whatever is bright in frame, so
-    // the lamp below gets a visible emissive bulb; the light alone would
-    // only illuminate surfaces.
+    // The camera's lens flare is the lens's (`LensRow::flare`), off unless
+    // authored, so these captures show the camera-lens element being
+    // demonstrated, rather than stacking two optical effects into every image.
     let mut post = helio_pass_postprocess::PostProcessSettings::default();
     post.tonemap_operator = helio::TonemapOperator::Aces;
     post.bloom_enabled = true;
     post.bloom_intensity = 0.15;
-    // Keep the unrelated lens-flare post effect off so these captures show
-    // the camera-lens element being demonstrated, rather than stacking two
-    // different optical effects into every image.
-    post.lens_flare.enabled = false;
     common::set_camera_postprocess(&mut scene_db.world, 0, &post);
 
     let mat_bulb = spawn_material(

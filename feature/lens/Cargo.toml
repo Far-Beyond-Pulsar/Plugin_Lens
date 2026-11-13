@@ -10,7 +10,10 @@ helio-scene-join = { workspace = true }
 helio-frame-api = { workspace = true }
 helio-feature-api = { workspace = true }
 helio-core = { workspace = true }
+# The bundled lenses trace as a job on the host's task system.
+helio-tasks = { workspace = true }
 helio-lens-optics = { workspace = true }
+helio-lens-api = { workspace = true }
 wgpu = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
 pulsar_reflection = { workspace = true }

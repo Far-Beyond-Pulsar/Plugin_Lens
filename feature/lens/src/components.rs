@@ -10,7 +10,10 @@
 //! distortion, shift, keystone, breathing, prism, lateral chromatic
 //! aberration and underwater port elements applied in stack order, the
 //! transmission by the vignetting, filter and T-stop elements. The lens is
-//! owned by the camera: post-process volumes never blend lens settings.
+//! owned by the camera: a volume around it may override only the artistic,
+//! blendable parameters of [`helio_lens_api`] (focus distance, vignette
+//! strength, chromatic aberration amount); the prescription, the elements and
+//! the flare settings never blend.
 //!
 //! Both rows are packed GPU components read by [`crate::LensPass`], matched
 //! to a view like `CameraPostProcessRow`: the first enabled
@@ -650,6 +653,8 @@ pub mod mask {
     pub const TILE: usize = 6;
 }
 
+pub use helio_lens_api::GpuLensFlare;
+
 /// A camera's lens. One row per view; see the module doc.
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
@@ -701,6 +706,9 @@ pub struct LensRow {
     /// camera widened by; see the README.
     pub overscan: f32,
     pub _pad1: f32,
+    /// The lens's flare settings, resolved with the lens ([`GpuLensFlare`]);
+    /// `enabled` 0 for a lens that flares nothing.
+    pub flare: GpuLensFlare,
 }
 
 // SAFETY: a `#[repr(C)]` bytemuck `Pod` row: no padding bytes, any bit
@@ -711,7 +719,8 @@ unsafe impl pulsar_scenedb::Pod for LensRow {}
 /// (a SceneDB component stored under this key, or a scene derivation).
 pub const CAMERA_LENSES: helio_core::BufferContract<LensRow> =
     helio_core::BufferContract::new("camera_lenses");
-const _: () = assert!(std::mem::size_of::<LensRow>() == 96);
+const _: () = assert!(std::mem::size_of::<LensRow>() == 192);
+const _: () = assert!(std::mem::offset_of!(LensRow, flare) == 96);
 const _: () = assert!(std::mem::offset_of!(LensRow, overscan) == 88);
 const _: () = assert!(std::mem::offset_of!(LensRow, focal_length_mm) == 16);
 const _: () = assert!(std::mem::offset_of!(LensRow, element_first) == 56);
@@ -746,6 +755,7 @@ impl LensRow {
             af_radius: 0.0,
             overscan: 1.0,
             _pad1: 0.0,
+            flare: GpuLensFlare::default(),
         }
     }
 }

@@ -79,9 +79,23 @@ pub struct ResolvedLens {
     /// shows this many times its tangent extent. Appended with the overscan
     /// support; every earlier offset is unchanged.
     pub overscan: f32,
+    /// The view's lens flare settings, as authored on the lens row (zero,
+    /// disabled, with no lens). The flare pass reads them through
+    /// [`helio_lens_api::FLARE_SETTINGS`]. Appended with the flare's move into
+    /// the lens contract; every earlier offset is unchanged.
+    pub flare: helio_lens_api::GpuLensFlare,
+    /// The blended overrides the lens applied this frame
+    /// ([`helio_lens_api::LENS_OVERRIDES`]; identity without a publisher): the
+    /// elements' vignette and aberration are read through them.
+    pub overrides: helio_lens_api::GpuLensOverrides,
 }
 
-const _: () = assert!(std::mem::size_of::<ResolvedLens>() == 88);
+/// Where [`ResolvedLens::flare`] starts.
+pub const RESOLVED_FLARE_OFFSET: u64 = 88;
+
+const _: () = assert!(std::mem::size_of::<ResolvedLens>() == 216);
+const _: () = assert!(std::mem::offset_of!(ResolvedLens, flare) == RESOLVED_FLARE_OFFSET as usize);
+const _: () = assert!(std::mem::offset_of!(ResolvedLens, overrides) == 184);
 const _: () = assert!(std::mem::offset_of!(ResolvedLens, aberration_flags) == 80);
 const _: () = assert!(std::mem::offset_of!(ResolvedLens, overscan) == 84);
 const _: () = assert!(std::mem::offset_of!(ResolvedLens, aperture_rotation) == 16);
@@ -116,6 +130,8 @@ impl Default for ResolvedLens {
             spectral_samples: 1,
             aberration_flags: 0,
             overscan: 1.0,
+            flare: bytemuck::Zeroable::zeroed(),
+            overrides: helio_lens_api::GpuLensOverrides::IDENTITY,
         }
     }
 }

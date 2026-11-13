@@ -181,21 +181,20 @@ pub fn bundled_bakes_ready() -> Option<&'static [LensBake]> {
     bakes().get().map(Vec::as_slice)
 }
 
-/// Starts tracing the bundled lenses on a background thread, so a host can
-/// register them without stalling its first frames. Returns at once.
+/// Starts tracing the bundled lenses as a job on the host's task system, so a
+/// host can register them without stalling its first frames. Returns at once.
 pub fn start_baking() {
     if bakes().get().is_some() {
         return;
     }
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
-        let spawned = std::thread::Builder::new()
-            .name("lens-bake".into())
-            .spawn(|| {
+        helio_tasks::submit(
+            helio_tasks::JobSpec::new("Trace the bundled lenses").owner("lens"),
+            |_| {
                 bundled_bakes();
-            });
-        // Without a thread the first caller that needs the bakes does the work.
-        drop(spawned);
+            },
+        );
     });
 }
 

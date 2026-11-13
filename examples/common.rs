@@ -550,6 +550,14 @@ pub struct LensComponent {
     pub overscan: f32,
     #[gpu]
     pub _pad1: f32,
+    /// The lens's flare settings, `helio_lens_api::GpuLensFlare`'s 24 words in
+    /// the array shapes reflection registers.
+    #[gpu]
+    pub flare_0: [u32; 8],
+    #[gpu]
+    pub flare_1: [u32; 8],
+    #[gpu]
+    pub flare_2: [u32; 8],
 }
 same_layout!(LensComponent, helio_pass_lens::LensRow, helio_pass_lens::CAMERA_LENSES, "camera_lenses"; view_id, enabled, focus_mode, quality, focal_length_mm, f_number, t_stop, sensor_width_mm, sensor_height_mm, focus_distance_m, af_u, af_v, af_speed, max_coc_px, element_first, element_count, tilt_angle, tilt_axis, field_curvature, aperture_blades, aperture_rotation, af_radius, overscan, _pad1);
 

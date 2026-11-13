@@ -84,6 +84,8 @@ struct Rig {
     masks: Option<wgpu::TextureView>,
     /// Prescription bank handed to the pass; none binds an empty one.
     prescriptions: Option<PrescriptionBank>,
+    /// The blended volume overrides handed to the pass; none binds the identity.
+    overrides: Option<helio_lens_api::GpuLensOverrides>,
     _serial: std::sync::MutexGuard<'static, ()>,
 }
 
@@ -156,6 +158,7 @@ impl Rig {
             shapes: None,
             masks: None,
             prescriptions: None,
+            overrides: None,
             _serial: serial,
         }
     }
@@ -295,6 +298,7 @@ impl Rig {
         };
         let lenses = lenses.map(|rows| buffer(bytes(rows)));
         let elements = elements.map(|rows| buffer(bytes(rows)));
+        let overrides = self.overrides.map(|o| buffer(bytemuck::bytes_of(&o)));
         let mut encoder = self.device.create_command_encoder(&Default::default());
         self.pass.record(
             &self.device,
@@ -308,6 +312,7 @@ impl Rig {
                 aperture_shapes: self.shapes.as_ref(),
                 masks: self.masks.as_ref(),
                 prescriptions: self.prescriptions.as_ref().map(PrescriptionBank::buffer),
+                overrides: overrides.as_ref(),
             },
         );
         self.queue.submit([encoder.finish()]);
@@ -364,7 +369,8 @@ fn lens() -> LensRow {
 
 #[test]
 fn component_rows_have_the_wgsl_strides() {
-    assert_eq!(std::mem::size_of::<LensRow>(), 96);
+    assert_eq!(std::mem::size_of::<LensRow>(), 192);
+    assert_eq!(std::mem::size_of::<ResolvedLens>(), 216);
     assert_eq!(std::mem::offset_of!(LensRow, view_id), 0);
     assert_eq!(std::mem::offset_of!(LensRow, focal_length_mm), 16);
     assert_eq!(std::mem::offset_of!(LensRow, focus_distance_m), 36);
@@ -375,7 +381,9 @@ fn component_rows_have_the_wgsl_strides() {
     assert_eq!(std::mem::offset_of!(LensElementRow, feather), 16);
     assert_eq!(std::mem::offset_of!(LensElementRow, params), 32);
     assert_eq!(std::mem::offset_of!(LensElementRow, region), 96);
-    assert_eq!(std::mem::size_of::<ResolvedLens>(), 88);
+    assert_eq!(std::mem::offset_of!(LensRow, flare), 96);
+    assert_eq!(std::mem::offset_of!(ResolvedLens, flare), 88);
+    assert_eq!(std::mem::offset_of!(ResolvedLens, overrides), 184);
     assert_eq!(std::mem::offset_of!(ResolvedLens, aberration_flags), 80);
     assert_eq!(std::mem::offset_of!(ResolvedLens, overscan), 84);
     assert_eq!(std::mem::offset_of!(LensRow, overscan), 88);
@@ -590,6 +598,7 @@ fn depth_rendered_below_image_resolution_keeps_foreground_focus() {
             aperture_shapes: None,
             masks: None,
             prescriptions: None,
+            overrides: None,
         },
     );
     rig.queue.submit([encoder.finish()]);
