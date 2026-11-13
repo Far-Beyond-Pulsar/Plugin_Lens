@@ -1,0 +1,13 @@
+[package]
+name = "helio-lens-api"
+version = "0.1.0"
+edition = "2021"
+description = "The lens's public contract: the flare settings the lens pass resolves per view, and the blendable overrides (focus distance, vignette strength, chromatic aberration amount) other kinds' volumes may contribute, with their WGSL. The one crate another kind reads a lens concept from."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+bytemuck = { workspace = true, features = ["derive"] }
+helio-core = { workspace = true }
+
+[dev-dependencies]
+naga = { version = "30", features = ["wgsl-in"] }

@@ -2,7 +2,7 @@
 //! GPU tests require an adapter and fail rather than silently skipping.
 
 use super::*;
-use helio_pass_postprocess::{GpuPostProcessUniforms, LensFlareSettings, PostProcessSettings};
+use helio_lens_api::GpuLensFlare;
 use wgpu::util::DeviceExt;
 
 const SIZE: u32 = 128;
@@ -90,23 +90,18 @@ fn image(
         .create_view(&Default::default())
 }
 
-fn uniforms(device: &wgpu::Device, lens: LensFlareSettings) -> wgpu::Buffer {
-    let settings = PostProcessSettings {
-        lens_flare: lens,
-        ..Default::default()
-    };
-    let gpu: GpuPostProcessUniforms = settings.to_gpu();
+fn uniforms(device: &wgpu::Device, lens: GpuLensFlare) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("lens test settings"),
-        contents: bytemuck::bytes_of(&gpu),
+        contents: bytemuck::bytes_of(&lens),
         usage: wgpu::BufferUsages::UNIFORM,
     })
 }
 
 /// Only the named component contributes; linear extraction.
-fn isolated(component: &str) -> LensFlareSettings {
-    let mut lens = LensFlareSettings {
-        enabled: true,
+fn isolated(component: &str) -> GpuLensFlare {
+    let mut lens = GpuLensFlare {
+        enabled: 1,
         intensity: 1.0,
         threshold: 0.0,
         soft_knee: 0.0,
@@ -118,7 +113,7 @@ fn isolated(component: &str) -> LensFlareSettings {
         starburst_intensity: 0.0,
         coating_strength: 0.0,
         ghost_rim: 0.0,
-        light_sources: false,
+        light_sources: 0,
         response_time: 0.0,
         ..Default::default()
     };
@@ -130,7 +125,7 @@ fn isolated(component: &str) -> LensFlareSettings {
         "starburst" => lens.starburst_intensity = 1.0,
         "lights" => {
             lens.ghost_intensity = 1.0;
-            lens.light_sources = true;
+            lens.light_sources = 1;
         }
         _ => unreachable!(),
     }
@@ -241,32 +236,18 @@ fn moments(response: &[[f32; 3]]) -> ([f32; 2], [f32; 2]) {
 }
 
 #[test]
-fn gpu_lens_block_matches_the_resolved_postprocess_abi() {
+fn the_flare_block_is_the_lens_contracts_and_rides_in_the_resolved_lens() {
     assert_eq!(
-        LENS_BLOCK_OFFSET as usize,
-        std::mem::offset_of!(GpuPostProcessUniforms, lens_enabled)
+        FLARE_BINDING_SIZE as usize,
+        std::mem::size_of::<GpuLensFlare>()
     );
+    // The lens pass resolves the block from the lens row and copies it from
+    // the resolved lens at this offset.
     assert_eq!(
-        POSTPROCESS_BINDING_SIZE as usize,
-        std::mem::size_of::<GpuPostProcessUniforms>()
+        helio_pass_lens::RESOLVED_FLARE_OFFSET as usize,
+        std::mem::offset_of!(ResolvedLens, flare)
     );
-    let lens = LensFlareSettings {
-        ghost_count: 6,
-        dispersion: 0.02,
-        ..isolated("glare")
-    };
-    let gpu = PostProcessSettings {
-        lens_flare: lens,
-        ..Default::default()
-    }
-    .to_gpu();
-    let bytes = bytemuck::bytes_of(&gpu);
-    let block: GpuLensResponse = bytemuck::pod_read_unaligned(
-        &bytes[LENS_BLOCK_OFFSET as usize..(LENS_BLOCK_OFFSET + LENS_BLOCK_SIZE) as usize],
-    );
-    assert_eq!((block.enabled, block.ghost_count), (1, 6));
-    assert_eq!(block.dispersion, 0.02);
-    assert_eq!(block.reserved_vignette, 0.0);
+    assert_eq!(std::mem::offset_of!(helio_pass_lens::LensRow, flare), 96);
 }
 
 #[test]
@@ -279,8 +260,8 @@ fn disabled_or_unbound_lens_clears_stale_response() {
 
     let off = uniforms(
         &device,
-        LensFlareSettings {
-            enabled: false,
+        GpuLensFlare {
+            enabled: 0,
             ..isolated("glare")
         },
     );
@@ -304,7 +285,7 @@ fn light_below_threshold_produces_no_optical_response() {
         .flat_map(|y| (60..64).map(move |x| (x, y, 0.9)))
         .collect();
     let input = image(&device, &queue, &dim);
-    let lens = LensFlareSettings {
+    let lens = GpuLensFlare {
         threshold: 1.0,
         soft_knee: 0.0,
         ..isolated("glare")
@@ -381,7 +362,7 @@ fn ghosts_reflect_across_the_optical_axis() {
     // Source right of centre; the first reference ghost has magnification
     // -0.42, so its image lies left of centre on the same axis.
     let input = image(&device, &queue, &[(102, 64, 2000.0)]);
-    let lens = LensFlareSettings {
+    let lens = GpuLensFlare {
         ghost_count: 1,
         ..isolated("ghost")
     };
@@ -427,7 +408,7 @@ fn anamorphic_streak_is_horizontal_and_wider_than_spherical() {
         Some(&input),
         Some(&uniforms(&device, isolated("streak"))),
     );
-    let anamorphic_lens = LensFlareSettings {
+    let anamorphic_lens = GpuLensFlare {
         profile: 1,
         ..isolated("streak")
     };
@@ -540,7 +521,7 @@ fn lights_just_outside_the_frame_still_flare_and_hand_over_smoothly() {
     let input = image(&device, &queue, &[]);
     let camera = camera_buffer(&device);
     let half_width = (std::f32::consts::FRAC_PI_8).tan() * 5.0;
-    let total_at = |pass: &mut LensFlarePass, ndc_x: f32, lens: LensFlareSettings| {
+    let total_at = |pass: &mut LensFlarePass, ndc_x: f32, lens: GpuLensFlare| {
         let lights = light_buffer(&device, [ndc_x * half_width, 0.0, -5.0], 2000.0);
         let optics = OpticsInputs {
             camera: Some(&camera),
@@ -575,8 +556,8 @@ fn lights_just_outside_the_frame_still_flare_and_hand_over_smoothly() {
     // Beyond the field margin the barrel blocks it.
     assert_eq!(total(&total_at(&mut pass, 1.6, isolated("lights"))), 0.0);
     // Disabled light sources contribute nothing.
-    let off = LensFlareSettings {
-        light_sources: false,
+    let off = GpuLensFlare {
+        light_sources: 0,
         ..isolated("lights")
     };
     assert_eq!(total(&total_at(&mut pass, 1.15, off)), 0.0);
@@ -630,7 +611,7 @@ fn response_fades_in_and_out_instead_of_popping() {
     let dark = image(&device, &queue, &[]);
     let lens = uniforms(
         &device,
-        LensFlareSettings {
+        GpuLensFlare {
             response_time: 0.06,
             ..isolated("glare")
         },
@@ -688,7 +669,7 @@ fn source_history_follows_the_camera_instead_of_trailing() {
     );
     let lens = uniforms(
         &device,
-        LensFlareSettings {
+        GpuLensFlare {
             response_time: 0.06,
             ..isolated("glare")
         },
@@ -807,7 +788,7 @@ fn sky_history_reprojects_as_directions() {
     let depth = far_depth(&device, &queue);
     let lens = uniforms(
         &device,
-        LensFlareSettings {
+        GpuLensFlare {
             response_time: 0.06,
             ..isolated("glare")
         },

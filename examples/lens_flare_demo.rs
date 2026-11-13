@@ -347,22 +347,27 @@ fn build_scene(
         &mut scene_db.world,
         make_material([0.3, 0.28, 0.25, 1.0], 0.4, 0.0, [0.0, 0.0, 0.0], 0.0),
     );
-    // Lens flare is camera optics, authored on the camera's post-process
-    // settings (view 0). It responds to whatever is bright in frame, so
-    // the lamp below gets a visible emissive bulb; the light alone would
-    // only illuminate surfaces.
+    // Lens flare is camera optics, authored on the camera's lens (view 0).
+    // It responds to whatever is bright in frame, so the lamp below gets a
+    // visible emissive bulb; the light alone would only illuminate surfaces.
     let mut post = helio_pass_postprocess::PostProcessSettings::default();
     post.tonemap_operator = helio::TonemapOperator::Aces;
     post.bloom_enabled = true;
     post.bloom_intensity = 0.15;
-    post.lens_flare = helio_pass_postprocess::LensFlareSettings {
-        enabled: true,
+    common::set_camera_postprocess(&mut scene_db.world, 0, &post);
+    // The flare belongs to a lens. This one only flares: f/64 with the circle
+    // of confusion capped at a pixel, so it defocuses nothing.
+    let mut flare_lens = helio_pass_lens::LensRow::new(0);
+    flare_lens.f_number = 64.0;
+    flare_lens.max_coc_px = 1.0;
+    flare_lens.flare = helio_lens_api::GpuLensFlare {
+        enabled: 1,
         quality: 1,
         ghost_count: 6,
         intensity: 0.5,
         ..Default::default()
     };
-    common::set_camera_postprocess(&mut scene_db.world, 0, &post);
+    common::set_camera_lens(&mut scene_db.world, common::LensComponent::from(flare_lens));
 
     let mat_bulb = spawn_material(
         &mut scene_db.world,

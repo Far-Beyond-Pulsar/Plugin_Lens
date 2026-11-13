@@ -1,6 +1,6 @@
 //! Scene-linear lens response: image-based scattering of everything bright in
 //! the frame plus analytic lens sources from scene lights. See README.md for
-//! the optical model and the `postprocess_uniforms` -> `lens_output` contract.
+//! the optical model and the `lens_flare_settings` -> `lens_output` contract.
 
 pub mod feature;
 pub use feature::LensFlareFeature;
@@ -157,7 +157,7 @@ impl LensFlarePass {
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(POSTPROCESS_BINDING_SIZE),
+                min_binding_size: wgpu::BufferSize::new(FLARE_BINDING_SIZE),
             },
             count: None,
         };
@@ -300,6 +300,7 @@ impl LensFlarePass {
             helio_core::include_wgsl!("../shaders/lens_response.wgsl"),
             &[
                 helio_light_api::LIGHT_LIST_SNIPPET,
+                helio_lens_api::FLARE_SNIPPET,
                 helio_light_api::SHADOW_ATLAS_SNIPPET,
                 helio_light_api::SHADOW_LOOKUP_SNIPPET,
             ],
@@ -496,7 +497,7 @@ impl LensFlarePass {
         device: &wgpu::Device,
         cmds: &mut CommandRecorder<'_>,
         input: Option<&wgpu::TextureView>,
-        pp: Option<&wgpu::Buffer>,
+        settings: Option<&wgpu::Buffer>,
         optics: OpticsInputs<'_>,
     ) {
         if let Some(upload) = self.dirt_upload.take() {
@@ -521,12 +522,11 @@ impl LensFlarePass {
             self.resize(device, input.texture().width(), input.texture().height());
         }
         self.clear(cmds);
-        // Old PP buffers fail closed without an out-of-bounds uniform binding.
-        let (Some(input), Some(pp)) = (
+        // A short settings buffer fails closed without an out-of-bounds uniform binding.
+        let (Some(input), Some(settings)) = (
             input,
-            pp.filter(|b| {
-                b.size() >= POSTPROCESS_BINDING_SIZE
-                    && b.usage().contains(wgpu::BufferUsages::UNIFORM)
+            settings.filter(|b| {
+                b.size() >= FLARE_BINDING_SIZE && b.usage().contains(wgpu::BufferUsages::UNIFORM)
             }),
         ) else {
             return;
@@ -549,7 +549,7 @@ impl LensFlarePass {
                 Some(dirt.clone()),
             ],
             [
-                Some(pp.clone()),
+                Some(settings.clone()),
                 Some(camera.clone()),
                 Some(lights.clone()),
                 Some(matrices.clone()),
@@ -559,9 +559,9 @@ impl LensFlarePass {
         if self.bindings.as_ref().map(|(k, ..)| k) != Some(&key) {
             let uniform = || {
                 wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: pp,
+                    buffer: settings,
                     offset: 0,
-                    size: wgpu::BufferSize::new(POSTPROCESS_BINDING_SIZE),
+                    size: wgpu::BufferSize::new(FLARE_BINDING_SIZE),
                 })
             };
             let control = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -863,7 +863,7 @@ impl RenderPass for LensFlarePass {
         &[OUTPUT_KEY]
     }
     fn declare_resources(&self, builder: &mut ResourceBuilder) {
-        builder.read(helio_pass_postprocess::POST_SETTINGS);
+        builder.read(helio_lens_api::FLARE_SETTINGS);
         builder.read(self.input_key);
         if let Some(alias) = self.input_alias {
             builder.read(alias);
@@ -900,9 +900,9 @@ impl RenderPass for LensFlarePass {
                 self.input_alias
                     .and_then(|alias| ctx.registry.get(ResourceKey::new(alias)))
             });
-        let pp = ctx
+        let settings = ctx
             .registry
-            .get(ResourceKey::new(helio_pass_postprocess::POST_SETTINGS));
+            .get(ResourceKey::new(helio_lens_api::FLARE_SETTINGS));
         let optics = OpticsInputs {
             camera: Some(ctx.camera),
             lights: ctx
@@ -928,7 +928,13 @@ impl RenderPass for LensFlarePass {
         };
         // Must follow fog/TSR on the graphics encoder. The separate compute
         // encoder is submitted BEFORE graphics and would sample stale HDR.
-        self.record(ctx.device, &mut ctx.graphics_cmds(), input, pp, optics);
+        self.record(
+            ctx.device,
+            &mut ctx.graphics_cmds(),
+            input,
+            settings,
+            optics,
+        );
         Ok(())
     }
 }

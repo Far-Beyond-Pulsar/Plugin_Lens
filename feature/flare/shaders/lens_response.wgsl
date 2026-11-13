@@ -1,5 +1,6 @@
 //!use helio_prelude
 //!use light_list
+//!use lens_flare
 //!use shadow_atlas
 //!use shadow_lookup
 
@@ -21,42 +22,11 @@
 // texel units the image path extracts, so a light carries the same ghost
 // energy whichever path renders it.
 
-// The PP prefix stays opaque: 27 * 16 = 432 bytes. Binding starts at zero,
-// avoiding min_uniform_buffer_offset_alignment restrictions on the lens tail.
-struct Lens {
-    enabled: u32,
-    quality: u32,
-    profile: u32,
-    ghost_count: u32,
-    intensity: f32,
-    threshold: f32,
-    soft_knee: f32,
-    ghost_intensity: f32,
-    halo_intensity: f32,
-    glare_intensity: f32,
-    streak_intensity: f32,
-    dispersion: f32,
-    reserved_vignette: f32,
-    starburst_intensity: f32,
-    starburst_length: f32,
-    coating_strength: f32,
-    ghost_rim: f32,
-    dirt_intensity: f32,
-    light_sources: u32,
-    light_intensity: f32,
-    field_margin: f32,
-    response_time: f32,
-    _pad0: f32,
-    _pad1: f32,
-}
-struct PostProcess {
-    prefix: array<vec4<u32>, 27>,
-    lens: Lens,
-}
+// The view's flare settings: `helio_lens_api::GpuLensFlare` (`//!use lens_flare`).
 
 // Indirect args per pyramid level: [3*k .. 3*k+3) for level k.
 const LEVELS: u32 = 5u;
-@group(0) @binding(0) var<uniform> pp: PostProcess;
+@group(0) @binding(0) var<uniform> flare: LensFlare;
 // Extraction: the HDR input. Downsample: the previous pyramid level.
 // Response: the whole pyramid (all mip levels).
 @group(0) @binding(1) var source: texture_2d<f32>;
@@ -159,12 +129,12 @@ fn radiance(c: vec3<f32>) -> vec3<f32> {
 fn luminance(c: vec3<f32>) -> f32 { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 fn gain(x: f32) -> f32 { return bounded(x, 0.0, 4.0, 0.0); }
 fn lens_active() -> bool {
-    return pp.lens.enabled != 0u
-        && bounded(pp.lens.intensity, 0.0, 16.0, 0.0) > 0.0
-        && (gain(pp.lens.glare_intensity) > 0.0 || gain(pp.lens.halo_intensity) > 0.0
-            || gain(pp.lens.streak_intensity) > 0.0 || gain(pp.lens.starburst_intensity) > 0.0
-            || gain(pp.lens.dirt_intensity) > 0.0
-            || (gain(pp.lens.ghost_intensity) > 0.0 && pp.lens.ghost_count > 0u));
+    return flare.enabled != 0u
+        && bounded(flare.intensity, 0.0, 16.0, 0.0) > 0.0
+        && (gain(flare.glare_intensity) > 0.0 || gain(flare.halo_intensity) > 0.0
+            || gain(flare.streak_intensity) > 0.0 || gain(flare.starburst_intensity) > 0.0
+            || gain(flare.dirt_intensity) > 0.0
+            || (gain(flare.ghost_intensity) > 0.0 && flare.ghost_count > 0u));
 }
 
 // ── Iris ─────────────────────────────────────────────────────────────────────
@@ -199,10 +169,10 @@ fn pupil(i: u32, count: u32) -> vec3<f32> {
 /// Spherical aberration concentrates a defocused ghost's light toward its
 /// edge. Mean over the disk is 1, so the rim redistributes, never adds.
 fn rim_profile(r: f32) -> f32 {
-    return max(1.0 + bounded(pp.lens.ghost_rim, 0.0, 1.0, 0.0) * (2.0 * r * r - 1.0), 0.0);
+    return max(1.0 + bounded(flare.ghost_rim, 0.0, 1.0, 0.0) * (2.0 * r * r - 1.0), 0.0);
 }
 fn coating(g: u32) -> vec3<f32> {
-    return mix(vec3(1.0), COATING[g], bounded(pp.lens.coating_strength, 0.0, 1.0, 0.0));
+    return mix(vec3(1.0), COATING[g], bounded(flare.coating_strength, 0.0, 1.0, 0.0));
 }
 
 @compute @workgroup_size(1)
@@ -239,9 +209,9 @@ fn cs_downsample(@builtin(global_invocation_id) id: vec3<u32>) {
 // sources fade in and out smoothly instead of switching at a cutoff.
 fn extract(c: vec3<f32>) -> vec3<f32> {
     let y = luminance(c);
-    let threshold = bounded(pp.lens.threshold, 0.0, HALF_MAX, 0.0);
+    let threshold = bounded(flare.threshold, 0.0, HALF_MAX, 0.0);
     if threshold <= 0.0 { return c; }
-    let knee = threshold * bounded(pp.lens.soft_knee, 0.0, 1.0, 0.0);
+    let knee = threshold * bounded(flare.soft_knee, 0.0, 1.0, 0.0);
     var contribution = max(y - threshold, 0.0);
     if knee > 0.0 {
         let soft = clamp(y - threshold + knee, 0.0, 2.0 * knee);
@@ -332,7 +302,7 @@ fn depth_visibility(uv: vec2<f32>, radius: f32, light_depth: f32, aspect: f32) -
 fn cs_sources(@builtin(local_invocation_index) lid: u32) {
     if lid == 0u { atomicStore(&sources.count, 0u); }
     storageBarrier();
-    if !(lens_active() && pp.lens.light_sources != 0u) { return; }
+    if !(lens_active() && flare.light_sources != 0u) { return; }
     let camera = cameras[0];
     let eye = camera.position_near.xyz;
     let forward = normalize(camera.forward_far.xyz);
@@ -342,8 +312,8 @@ fn cs_sources(@builtin(local_invocation_index) lid: u32) {
     // at the lens into the texel-sum energy the image path would extract.
     let texel_angle = vec2(2.0 / (camera.proj[0][0] * size.x), 2.0 / (camera.proj[1][1] * size.y));
     let texel_solid_angle = texel_angle.x * texel_angle.y;
-    let margin = bounded(pp.lens.field_margin, 0.0, 4.0, 0.35);
-    let light_gain = bounded(pp.lens.light_intensity, 0.0, 16.0, 0.0);
+    let margin = bounded(flare.field_margin, 0.0, 4.0, 0.35);
+    let light_gain = bounded(flare.light_intensity, 0.0, 16.0, 0.0);
     for (var i = lid; i < arrayLength(&lights); i += 64u) {
         let intensity = lights[i].color_intensity.w;
         if !(intensity > 0.0) || !finite(intensity) { continue; }
@@ -457,8 +427,8 @@ fn cs_response(@builtin(global_invocation_id) id: vec3<u32>) {
     let uv = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(size);
     let width = f32(size.x);
     let texel = 1.0 / width;
-    let high = pp.lens.quality == 1u;
-    let anamorphic = pp.lens.profile == 1u;
+    let high = flare.quality == 1u;
+    let anamorphic = flare.profile == 1u;
     let taps = select(8u, 24u, high);
     let aspect = f32(size.x) / f32(size.y);
     // Offsets are authored in UV-x units; scale y so shapes stay round.
@@ -468,7 +438,7 @@ fn cs_response(@builtin(global_invocation_id) id: vec3<u32>) {
     let focal = bounded(optics.focal_length_mm, 8.0, 600.0, 50.0);
     let sensor = bounded(optics.sensor_width_mm, 4.0, 70.0, 36.0);
     let field_scale = clamp((sensor / 36.0) * (50.0 / focal), 0.35, 2.0);
-    let dispersion = bounded(pp.lens.dispersion, 0.0, 0.05, 0.0);
+    let dispersion = bounded(flare.dispersion, 0.0, 0.05, 0.0);
     // Airy first-zero scale at 550nm plus a compact surface-scatter surrogate.
     // Kernel weights are normalized: aperture changes shape, not exposure.
     let diffraction = 1.22 * 0.00055 * f_number / sensor;
@@ -476,7 +446,7 @@ fn cs_response(@builtin(global_invocation_id) id: vec3<u32>) {
     let source_count = min(atomicLoad(&sources.count), MAX_SOURCES);
     var response = vec3(0.0);
 
-    if gain(pp.lens.glare_intensity) > 0.0 {
+    if gain(flare.glare_intensity) > 0.0 {
         var glare = vec3(0.0);
         var weight_sum = 0.0;
         let lod = footprint_lod(2.0 * glare_radius / sqrt(f32(taps)), width);
@@ -487,11 +457,11 @@ fn cs_response(@builtin(global_invocation_id) id: vec3<u32>) {
             glare += sample_zero(uv + p.xy * metric * squeeze * glare_radius, lod) * weight;
             weight_sum += weight;
         }
-        response += glare * (0.06 * gain(pp.lens.glare_intensity) / weight_sum);
+        response += glare * (0.06 * gain(flare.glare_intensity) / weight_sum);
     }
 
-    if gain(pp.lens.ghost_intensity) > 0.0 {
-        let ghosts = min(pp.lens.ghost_count, select(4u, 8u, high));
+    if gain(flare.ghost_intensity) > 0.0 {
+        let ghosts = min(flare.ghost_count, select(4u, 8u, high));
         let pupil_taps = select(7u, 19u, high);
         let rim_fringe = min(0.3, dispersion * 25.0);
         for (var g = 0u; g < ghosts; g++) {
@@ -501,7 +471,7 @@ fn cs_response(@builtin(global_invocation_id) id: vec3<u32>) {
             // is the pupil scaled well past the source size: a small bright
             // source reads as a soft iris-shaped disk, not its own shape.
             let radius = profile.z * 4.0 * clamp(2.8 / f_number, 0.25, 2.0) * field_scale;
-            let reflect = profile.y * gain(pp.lens.ghost_intensity) * coating(g);
+            let reflect = profile.y * gain(flare.ghost_intensity) * coating(g);
 
             // Image path: convolve the extracted light with the iris.
             let center = vec2(0.5) + (uv - 0.5) / m;
@@ -548,7 +518,7 @@ fn cs_response(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    if gain(pp.lens.halo_intensity) > 0.0 {
+    if gain(flare.halo_intensity) > 0.0 {
         // Radial halo: each output pixel gathers from a fixed distance along
         // its direction to the optical axis, so a source maps to a continuous
         // arc of a circle about the axis (no per-tap copies of the source).
@@ -571,11 +541,11 @@ fn cs_response(@builtin(global_invocation_id) id: vec3<u32>) {
             // Fade toward the image corners, where the reflecting surfaces
             // vignette the halo path.
             let fade = clamp(1.0 - axis_length / 0.9, 0.0, 1.0);
-            response += halo * (0.02 * gain(pp.lens.halo_intensity) * fade * fade / weight_sum);
+            response += halo * (0.02 * gain(flare.halo_intensity) * fade * fade / weight_sum);
         }
     }
 
-    if gain(pp.lens.streak_intensity) > 0.0 {
+    if gain(flare.streak_intensity) > 0.0 {
         var streak = vec3(0.0);
         var weight_sum = 0.0;
         let radius = select(0.06, 0.18, anamorphic) * field_scale;
@@ -588,17 +558,17 @@ fn cs_response(@builtin(global_invocation_id) id: vec3<u32>) {
                 vec2(t * radius * dispersion, 0.0), lod) * weight;
             weight_sum += weight;
         }
-        response += streak * (0.03 * gain(pp.lens.streak_intensity) / weight_sum);
+        response += streak * (0.03 * gain(flare.streak_intensity) / weight_sum);
     }
 
     let n = blades();
-    if gain(pp.lens.starburst_intensity) > 0.0 && n > 0u {
+    if gain(flare.starburst_intensity) > 0.0 && n > 0u {
         // Fraunhofer diffraction by straight iris blades: each blade edge
         // throws a spike perpendicular to it. Opposite edges of an even iris
         // share a line, so n blades give n spikes (n even) or 2n (n odd).
         // Spike length scales with wavelength, which spreads colour outward.
         let lines = select(n, n / 2u, n % 2u == 0u);
-        let length_uv = bounded(pp.lens.starburst_length, 0.0, 1.0, 0.25) * field_scale;
+        let length_uv = bounded(flare.starburst_length, 0.0, 1.0, 0.25) * field_scale;
         let spike_taps = select(10u, 20u, high);
         let lod = footprint_lod(length_uv / f32(spike_taps), width);
         let rotation = bounded(optics.aperture_rotation, -100.0, 100.0, 0.0);
@@ -622,7 +592,7 @@ fn cs_response(@builtin(global_invocation_id) id: vec3<u32>) {
                 }
             }
         }
-        response += burst * (0.12 * gain(pp.lens.starburst_intensity) / max(weight_sum, 1e-6));
+        response += burst * (0.12 * gain(flare.starburst_intensity) / max(weight_sum, 1e-6));
 
         // Off-frame lights still throw spikes into the frame.
         for (var s = 0u; s < source_count; s++) {
@@ -646,12 +616,12 @@ fn cs_response(@builtin(global_invocation_id) id: vec3<u32>) {
                 spikes += line * vec3(red_envelope, green_envelope, blue_envelope);
             }
             // Same normalisation as the image path's tap weights, per texel.
-            let norm = 0.12 * gain(pp.lens.starburst_intensity) / (f32(lines) * 2.0 * length_uv * width * 3.0);
+            let norm = 0.12 * gain(flare.starburst_intensity) / (f32(lines) * 2.0 * length_uv * width * 3.0);
             response += spikes * src.energy * src.weight * norm;
         }
     }
 
-    if gain(pp.lens.dirt_intensity) > 0.0 {
+    if gain(flare.dirt_intensity) > 0.0 {
         // Dirt on the front element scatters whatever light reaches it: the
         // broad low-frequency light across the frame plus off-frame sources.
         var veil = sample_zero(uv, f32(LEVELS - 1u));
@@ -661,11 +631,11 @@ fn cs_response(@builtin(global_invocation_id) id: vec3<u32>) {
             veil += src.energy * src.weight / (1.0 + dot(d, d) * 40.0) / (width * width * 0.25);
         }
         let dirt = textureSampleLevel(dirt_tex, dirt_samp, uv, 0.0).rgb;
-        response += veil * dirt * gain(pp.lens.dirt_intensity);
+        response += veil * dirt * gain(flare.dirt_intensity);
     }
 
     textureStore(destination, vec2<i32>(id.xy),
-        vec4(radiance(response * bounded(pp.lens.intensity, 0.0, 16.0, 0.0)), 0.0));
+        vec4(radiance(response * bounded(flare.intensity, 0.0, 16.0, 0.0)), 0.0));
 }
 
 // ── Temporal source response ─────────────────────────────────────────────────
@@ -695,7 +665,7 @@ fn cs_temporal(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = textureDimensions(destination);
     if any(id.xy >= size) { return; }
     let current = textureLoad(source, vec2<i32>(id.xy), 0).rgb;
-    let tau = bounded(pp.lens.response_time, 0.0, 2.0, 0.0);
+    let tau = bounded(flare.response_time, 0.0, 2.0, 0.0);
     let dt = bounded(temporal.dt, 0.0, 1.0, 0.0);
     var blend = select(1.0 - exp(-dt / max(tau, 1e-4)), 1.0, tau <= 1e-4 || temporal.valid < 0.5);
     var previous = vec3(0.0);

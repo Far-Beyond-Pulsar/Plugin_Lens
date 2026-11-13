@@ -1262,3 +1262,97 @@ fn the_new_elements_are_built_with_the_documented_slots() {
     ];
     assert!(kinds.iter().enumerate().all(|(i, &k)| k == 5 + i as u32));
 }
+
+/// Blended volume overrides (`helio_lens_api`) reach the lens: the manual focus
+/// distance, the natural vignette's amount and a lateral aberration's
+/// first-order coefficient are the camera's own values moved by `keep * value
+/// + add`, and the view's flare block rides in the resolved lens.
+#[test]
+fn volume_overrides_move_the_lens_artistic_parameters() {
+    use helio_lens_api::{
+        GpuLensFlare, GpuLensOverrides, GpuLensVolumeOverrides, OVERRIDE_CHROMATIC_ABERRATION,
+        OVERRIDE_FOCUS_DISTANCE, OVERRIDE_VIGNETTE_STRENGTH,
+    };
+    let mut rig = Rig::new();
+    let scene = flat([1.0; 3]);
+    let elements = [
+        LensElementRow::natural_vignette(0.2, LensRegion::FullFrame),
+        LensElementRow::lateral_ca(0.08, 0.0, LensRegion::FullFrame),
+    ];
+    let mut lens = stacked(&elements);
+    lens.focus_distance_m = 3.0;
+    lens.flare = GpuLensFlare {
+        enabled: 1,
+        ghost_count: 5,
+        ..Default::default()
+    };
+
+    // Without volumes: the camera's own values.
+    rig.record(&scene, Some(&[lens]), rows(&elements));
+    let own = rig.resolved();
+    assert!((own.focus_distance_m - 3.0).abs() < 1.0e-3, "{own:?}");
+    assert!((own.natural_vignette - 0.2).abs() < 1.0e-6);
+    assert_eq!(own.overrides, GpuLensOverrides::IDENTITY);
+    assert_eq!((own.flare.enabled, own.flare.ghost_count), (1, 5));
+
+    // One volume at half weight overriding all three.
+    rig.overrides = Some(GpuLensOverrides::IDENTITY.blend(
+        &GpuLensVolumeOverrides {
+            mask: OVERRIDE_FOCUS_DISTANCE
+                | OVERRIDE_VIGNETTE_STRENGTH
+                | OVERRIDE_CHROMATIC_ABERRATION,
+            focus_distance_m: 10.0,
+            vignette_strength: 0.8,
+            chromatic_aberration: 0.0,
+        },
+        0.5,
+    ));
+    rig.record(&scene, Some(&[lens]), rows(&elements));
+    let blended = rig.resolved();
+    // Focus: halfway from 3 m to 10 m. Vignette: halfway from 0.2 to 0.8.
+    assert!(
+        (blended.focus_distance_m - 6.5).abs() < 1.0e-3,
+        "{blended:?}"
+    );
+    assert!((blended.natural_vignette - 0.5).abs() < 1.0e-5);
+    // The flare is not a volume's: it is the camera's, unchanged.
+    assert_eq!(blended.flare, own.flare);
+
+    // The aberration at half its coefficient moves the red/blue split half as
+    // far as the camera's own (a point away from the centre).
+    let point = Scene::new(
+        |x, y| {
+            if (x, y) == (96, 64) {
+                [1.0; 3]
+            } else {
+                [0.0; 3]
+            }
+        },
+        |_, _| 3.0,
+    );
+    let split = |rig: &mut Rig| {
+        let frame = rig.record(&point, Some(&[lens]), rows(&elements));
+        let red = centroid(&frame, (96.0, 64.0), 8, 0).0;
+        let blue = centroid(&frame, (96.0, 64.0), 8, 2).0;
+        red - blue
+    };
+    rig.overrides = None;
+    let full = split(&mut rig);
+    rig.overrides = Some(GpuLensOverrides::IDENTITY.blend(
+        &GpuLensVolumeOverrides {
+            mask: OVERRIDE_CHROMATIC_ABERRATION,
+            chromatic_aberration: 0.04,
+            ..Default::default()
+        },
+        1.0,
+    ));
+    let half = split(&mut rig);
+    assert!(
+        full.abs() > 1.0,
+        "the camera's own aberration splits red and blue: {full}"
+    );
+    assert!(
+        (half / full - 0.5).abs() < 0.1,
+        "halving the coefficient halves the split: {half} against {full}"
+    );
+}

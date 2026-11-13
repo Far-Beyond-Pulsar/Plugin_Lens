@@ -7,6 +7,7 @@ fn the_lens_response_shader_validates() {
         include_str!("../shaders/lens_response.wgsl"),
         &[
             helio_light_api::LIGHT_LIST_SNIPPET,
+            helio_lens_api::FLARE_SNIPPET,
             helio_light_api::SHADOW_ATLAS_SNIPPET,
             helio_light_api::SHADOW_LOOKUP_SNIPPET,
         ],

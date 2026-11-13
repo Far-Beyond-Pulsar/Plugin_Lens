@@ -63,6 +63,9 @@ const COMPUTE: wgpu::ShaderStages = wgpu::ShaderStages::COMPUTE;
 /// Binding of the prescription bank in the stages that consult it (resolve,
 /// circles of confusion, gather, composite, aberration); equals `bank` in the WGSL.
 const BANK_BINDING: u32 = 30;
+/// Binding of the blended overrides in the resolve stage; equals
+/// `overrides_in` in the WGSL.
+const OVERRIDES_BINDING: u32 = 31;
 
 /// Markers around the default no-op `USER` hooks in `lens.wgsl`; a host
 /// snippet replaces what lies between them.
@@ -82,6 +85,13 @@ const USER_HOOKS: [(&str, &str); 3] = [
         "user_focus",
         "fn user_focus(uv: vec2<f32>, params: array<f32, 16>, s: f32) -> f32 { return s; }",
     ),
+];
+
+/// The api snippets `lens.wgsl` opts into: the flare settings block it
+/// resolves and the volumes' blendable overrides it applies.
+const SNIPPETS: [helio_core::shader::ShaderSnippet; 2] = [
+    helio_lens_api::FLARE_SNIPPET,
+    helio_lens_api::OVERRIDES_SNIPPET,
 ];
 
 /// `lens.wgsl` with its default `USER` hooks replaced by `snippet`, plus the
@@ -255,9 +265,13 @@ pub struct LensInputs<'a> {
     /// Baked lens prescriptions, see [`PRESCRIPTIONS`] and
     /// [`PrescriptionBank::buffer`].
     pub prescriptions: Option<&'a wgpu::Buffer>,
+    /// The blended overrides of volumes around the camera
+    /// ([`helio_lens_api::LENS_OVERRIDES`]); without them the lens uses its
+    /// own values.
+    pub overrides: Option<&'a wgpu::Buffer>,
 }
 
-type BindingKey = ([Option<wgpu::TextureView>; 4], [Option<wgpu::Buffer>; 4]);
+type BindingKey = ([Option<wgpu::TextureView>; 4], [Option<wgpu::Buffer>; 5]);
 
 // Stages in recording order; `args` holds one indirect triple per stage after
 // the resolve. The aberration stage follows the composite: `DOWN` runs once
@@ -423,6 +437,11 @@ pub struct LensPass {
     fallback_elements: wgpu::Buffer,
     /// A bank of no lenses: the prescription binding when the host has none.
     fallback_prescriptions: wgpu::Buffer,
+    /// Nothing overridden: the overrides binding when no volume publishes any.
+    fallback_overrides: wgpu::Buffer,
+    /// The view's flare settings ([`helio_lens_api::FLARE_SETTINGS`]), copied
+    /// from the resolved lens every frame.
+    flare_settings: wgpu::Buffer,
     fallback_depth: wgpu::TextureView,
     /// One white layer: the aperture array when the host supplies none.
     fallback_shapes: wgpu::Texture,
@@ -462,15 +481,17 @@ impl LensPass {
         user_wgsl: Option<&str>,
     ) -> Self {
         let shader = match user_wgsl {
-            None => helio_core::shader::module(
+            None => helio_core::shader::module_with(
                 device,
                 "Screen-space lens",
                 helio_core::include_wgsl!("../shaders/lens.wgsl"),
+                &SNIPPETS,
             ),
-            Some(snippet) => helio_core::shader::module(
+            Some(snippet) => helio_core::shader::module_with(
                 device,
                 "Screen-space lens",
                 lens_source_with_user(snippet).as_str(),
+                &SNIPPETS,
             ),
         };
         let stage = |entry_point: &'static str,
@@ -521,6 +542,7 @@ impl LensPass {
                     uniform(8),
                     texture_array(24),
                     storage(BANK_BINDING, true),
+                    storage(OVERRIDES_BINDING, true),
                 ],
             ),
             stage(
@@ -690,6 +712,22 @@ impl LensPass {
                 16,
                 wgpu::BufferUsages::STORAGE,
             ),
+            fallback_overrides: {
+                use wgpu::util::DeviceExt;
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Lens no overrides"),
+                    contents: bytemuck::bytes_of(&helio_lens_api::GpuLensOverrides::IDENTITY),
+                    usage: wgpu::BufferUsages::STORAGE,
+                })
+            },
+            // Zero: no lens, no flare.
+            flare_settings: buffer(
+                "Lens flare settings",
+                std::mem::size_of::<helio_lens_api::GpuLensFlare>() as u64,
+                wgpu::BufferUsages::UNIFORM
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+            ),
             fallback_depth: device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some("Lens neutral depth"),
@@ -811,6 +849,7 @@ impl LensPass {
     ) {
         let Some(input) = input else {
             self.clear(cmds);
+            cmds.clear_buffer(&self.flare_settings, 0, None);
             return;
         };
         self.resize(device, input.texture().width(), input.texture().height());
@@ -845,6 +884,7 @@ impl LensPass {
         let lenses = scene.lenses.unwrap_or(&self.fallback_lenses);
         let elements = scene.elements.unwrap_or(&self.fallback_elements);
         let bank = scene.prescriptions.unwrap_or(&self.fallback_prescriptions);
+        let overrides = scene.overrides.unwrap_or(&self.fallback_overrides);
         // Bind groups are cached per GPU handle; comparing handles, not
         // pointers, is safe across TSR's rotating outputs and resize.
         let key: BindingKey = (
@@ -859,6 +899,7 @@ impl LensPass {
                 Some(elements.clone()),
                 Some(camera.clone()),
                 Some(bank.clone()),
+                Some(overrides.clone()),
             ],
         );
         if self.bindings.as_ref().map(|(k, _)| k) != Some(&key) {
@@ -878,6 +919,7 @@ impl LensPass {
                         entry(8, self.frame.as_entire_binding()),
                         entry(24, wgpu::BindingResource::TextureView(masks)),
                         entry(BANK_BINDING, bank.as_entire_binding()),
+                        entry(OVERRIDES_BINDING, overrides.as_entire_binding()),
                     ],
                 ),
                 (
@@ -1004,6 +1046,14 @@ impl LensPass {
             pass.set_bind_group(0, &groups[RESOLVE], &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
+        // The flare pass reads the view's flare settings as a uniform.
+        cmds.copy_buffer_to_buffer(
+            &self.resolved,
+            RESOLVED_FLARE_OFFSET,
+            &self.flare_settings,
+            0,
+            std::mem::size_of::<helio_lens_api::GpuLensFlare>() as u64,
+        );
         // Every later dispatch is GPU-sized: zero groups while the view has no
         // enabled lens, except the composite, which copies the image through.
         for (stage, group) in groups.iter().enumerate().take(COMPOSITE + 1).skip(COC) {
@@ -1046,7 +1096,7 @@ impl RenderPass for LensPass {
         "Lens"
     }
     fn writes(&self) -> &'static [&'static str] {
-        &[LENS_COLOR, RESOLVED_KEY]
+        &[LENS_COLOR, RESOLVED_KEY, helio_lens_api::FLARE_SETTINGS]
     }
     fn declare_resources(&self, builder: &mut ResourceBuilder) {
         builder.read(self.input_key);
@@ -1057,6 +1107,10 @@ impl RenderPass for LensPass {
         // while publish routes the actual views without a second texture.
         builder.write_buffer(LENS_COLOR);
         builder.write_buffer(RESOLVED_KEY);
+        builder.write_buffer(helio_lens_api::FLARE_SETTINGS);
+        // The blended overrides of the volumes around the camera; the lens's
+        // own values without a publisher.
+        builder.read(helio_lens_api::LENS_OVERRIDES);
     }
     fn prepare(&mut self, ctx: &PrepareContext) -> HelioResult<()> {
         let frame = [ctx.delta_time.max(0.0), 0.0, 0.0, 0.0];
@@ -1100,6 +1154,13 @@ impl RenderPass for LensPass {
         // for `postprocess_uniforms`).
         let resolved: &'a wgpu::Buffer = unsafe { std::mem::transmute(&self.resolved) };
         frame.write(ResourceKey::new(RESOLVED_KEY), resolved, self.name());
+        // SAFETY: as for `resolved`.
+        let flare: &'a wgpu::Buffer = unsafe { std::mem::transmute(&self.flare_settings) };
+        frame.write(
+            ResourceKey::new(helio_lens_api::FLARE_SETTINGS),
+            flare,
+            self.name(),
+        );
     }
     fn execute(&mut self, ctx: &mut PassContext) -> HelioResult<()> {
         let input = ctx
@@ -1123,6 +1184,9 @@ impl RenderPass for LensPass {
             prescriptions: ctx
                 .registry
                 .get::<&wgpu::Buffer>(ResourceKey::new(PRESCRIPTIONS)),
+            overrides: ctx
+                .registry
+                .get::<&wgpu::Buffer>(ResourceKey::new(helio_lens_api::LENS_OVERRIDES)),
             lenses: ctx
                 .scene_buffers
                 .get(helio_core::BufferKey::of("camera_lenses"))

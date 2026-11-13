@@ -18,8 +18,10 @@
 //! registration above, in one place.
 
 pub mod component;
+pub mod flare;
 
 pub use component::*;
+pub use flare::*;
 
 /// Registers the lenses' source-row and element-row columns.
 pub fn register_columns(

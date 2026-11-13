@@ -29,8 +29,8 @@ rather than copying rules here.
 ## Key commands (from the Pulsar-Native root)
 
 ```
-cargo check -p lens_component -p lens_plugin -p lens-examples -p helio-pass-flare -p helio-pass-lens -p helio-lens-optics --tests
-cargo test -p lens_component -p helio-pass-flare -p helio-pass-lens -p helio-lens-optics
+cargo check -p lens_component -p lens_plugin -p lens-examples -p helio-lens-api -p helio-pass-flare -p helio-pass-lens -p helio-lens-optics --tests
+cargo test -p lens_component -p helio-lens-api -p helio-pass-flare -p helio-pass-lens -p helio-lens-optics
 cargo test -p one_owner          every concept has one owner (scans this plugin)
 cargo test -p installed_plugins  the installed set and absent plugins
 ```
