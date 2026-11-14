@@ -5,6 +5,14 @@ edition = "2021"
 description = "Helio render pass: physically based screen-space lens (thin-lens focus field and defocus)"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = ["gpu"]
+# `#[derive(SceneStore)]` checks the deriving crate's own `gpu` feature.
+gpu = []
+# Row components for standalone hosts (`host_rows`): examples enable it;
+# engines derive the rows from the lens component.
+host-rows = ["dep:helio-components", "dep:pulsar_scenedb_derive", "dep:serde_json"]
+
 [dependencies]
 helio-scene-join = { workspace = true }
 helio-frame-api = { workspace = true }
@@ -18,6 +26,10 @@ wgpu = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
 pulsar_reflection = { workspace = true }
 pulsar_scenedb = { workspace = true }
+helio-components = { workspace = true, optional = true }
+pulsar_scenedb_derive = { workspace = true, optional = true }
+# `#[derive(SceneStore)]` expands to `::serde_json` paths.
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 pollster = "0.4"
