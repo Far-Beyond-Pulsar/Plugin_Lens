@@ -5,6 +5,9 @@
 //! `lens_color` / `lens_resolved` graph contract.
 
 pub mod feature;
+/// The lens's rows as SceneDB components for standalone hosts.
+#[cfg(feature = "host-rows")]
+pub mod host_rows;
 pub mod scene_rows;
 
 pub use feature::LensFeature;
