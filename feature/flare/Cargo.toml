@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 helio-light-api = { workspace = true }
 helio-lens-api = { workspace = true }
 helio-frame-api = { workspace = true }
+helio-portal-api = { workspace = true }
 helio-feature-api = { workspace = true }
 helio-core = { workspace = true }
 # The camera optics the lens response is built from.

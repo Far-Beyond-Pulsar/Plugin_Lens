@@ -78,6 +78,7 @@ pub struct OpticsInputs<'a> {
     pub camera: Option<&'a wgpu::Buffer>,
     pub lights: Option<&'a wgpu::Buffer>,
     pub depth: Option<&'a wgpu::TextureView>,
+    pub aperture_mask: Option<&'a wgpu::TextureView>,
     pub shadow_matrices: Option<&'a wgpu::Buffer>,
     pub shadow_atlas: Option<&'a wgpu::TextureView>,
     pub dirt: Option<&'a wgpu::TextureView>,
@@ -85,7 +86,7 @@ pub struct OpticsInputs<'a> {
     pub lens: Option<&'a wgpu::Buffer>,
 }
 
-type BindingKey = [Option<wgpu::TextureView>; 5];
+type BindingKey = [Option<wgpu::TextureView>; 6];
 
 /// All persistent state is derived GPU machinery; no CPU copy of settings or lights.
 pub struct LensFlarePass {
@@ -126,6 +127,7 @@ pub struct LensFlarePass {
     /// The neutral 50 mm f/2.8 lens, for graphs without a lens pass.
     fallback_lens: wgpu::Buffer,
     fallback_depth: wgpu::TextureView,
+    fallback_aperture: wgpu::TextureView,
     fallback_shadow: wgpu::TextureView,
     bindings: Option<(
         (BindingKey, [Option<wgpu::Buffer>; 5]),
@@ -260,6 +262,11 @@ impl LensFlarePass {
                     count: None,
                 },
                 storage(9, true),
+                texture(
+                    10,
+                    wgpu::TextureSampleType::Uint,
+                    wgpu::TextureViewDimension::D2,
+                ),
             ],
         });
         let temporal_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -427,6 +434,7 @@ impl LensFlarePass {
                 usage: wgpu::BufferUsages::STORAGE,
             }),
             fallback_depth: depth_texture("Lens neutral depth", false),
+            fallback_aperture: helio_portal_api::empty_aperture_mask(device),
             fallback_shadow: depth_texture("Lens empty shadow atlas", true),
             bindings: None,
         }
@@ -535,6 +543,7 @@ impl LensFlarePass {
         let lights = optics.lights.unwrap_or(&self.fallback_lights);
         let matrices = optics.shadow_matrices.unwrap_or(&self.fallback_matrices);
         let depth = optics.depth.unwrap_or(&self.fallback_depth);
+        let aperture = optics.aperture_mask.unwrap_or(&self.fallback_aperture);
         let shadow = optics.shadow_atlas.unwrap_or(&self.fallback_shadow);
         let dirt = optics.dirt.unwrap_or(&self.dirt);
         let lens = optics.lens.unwrap_or(&self.fallback_lens);
@@ -547,6 +556,7 @@ impl LensFlarePass {
                 Some(depth.clone()),
                 Some(shadow.clone()),
                 Some(dirt.clone()),
+                Some(aperture.clone()),
             ],
             [
                 Some(settings.clone()),
@@ -655,6 +665,10 @@ impl LensFlarePass {
                     wgpu::BindGroupEntry {
                         binding: 9,
                         resource: lens.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 10,
+                        resource: wgpu::BindingResource::TextureView(aperture),
                     },
                 ],
             });
@@ -873,6 +887,7 @@ impl RenderPass for LensFlarePass {
         builder.read(helio_light_api::SHADOW_MATRICES);
         builder.read(DIRT_KEY);
         builder.read(RESOLVED_KEY);
+        builder.read_optional(helio_portal_api::PORTAL_MASK);
         // A manually owned resource: this declaration tracks its dependency,
         // while publish routes the actual sampled view without a second texture.
         builder.write_buffer(OUTPUT_KEY);
@@ -910,6 +925,9 @@ impl RenderPass for LensFlarePass {
                 .get(helio_core::BufferKey::of(helio_light_api::LIGHT_LIST))
                 .map(|handle| &handle.buffer),
             depth: Some(ctx.depth),
+            aperture_mask: ctx
+                .registry
+                .texture_view(ResourceKey::new(helio_portal_api::PORTAL_MASK)),
             shadow_matrices: ctx
                 .registry
                 .get::<helio_light_api::ShadowMatricesFrameData<'_>>(

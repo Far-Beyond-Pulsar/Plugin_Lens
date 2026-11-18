@@ -82,6 +82,7 @@ struct LensOptics {
     natural_vignette: f32,
 }
 @group(1) @binding(9) var<storage, read> optics: LensOptics;
+@group(1) @binding(10) var aperture_mask: texture_2d<u32>;
 
 const PI: f32 = 3.141592653589793;
 const HALF_MAX: f32 = 65504.0;
@@ -283,13 +284,16 @@ fn shadow_visibility(light: GpuLight, p: vec3<f32>) -> f32 {
 /// Fraction of the source disk not hidden by opaque geometry on screen.
 fn depth_visibility(uv: vec2<f32>, radius: f32, light_depth: f32, aspect: f32) -> f32 {
     let dims = vec2<f32>(textureDimensions(scene_depth));
+    let aperture_dims = vec2<f32>(textureDimensions(aperture_mask));
     var visible = 0.0;
     var taps = 0.0;
     for (var k = 0u; k < 9u; k++) {
         let p = pupil(k, 9u).xy * vec2(1.0, aspect) * radius;
         let tap = uv + p;
         if any(tap < vec2(0.0)) || any(tap >= vec2(1.0)) { continue; }
-        let depth = textureLoad(scene_depth, vec2<i32>(tap * dims), 0);
+        let aperture = textureLoad(aperture_mask, vec2<i32>(tap * aperture_dims), 0).rg;
+        let scene_z = textureLoad(scene_depth, vec2<i32>(tap * dims), 0);
+        let depth = max(scene_z, select(0.0, bitcast<f32>(aperture.g), aperture.r != 0u));
         visible += select(0.0, 1.0, !helio_depth_is_nearer(depth, light_depth));
         taps += 1.0;
     }
@@ -318,6 +322,9 @@ fn cs_sources(@builtin(local_invocation_index) lid: u32) {
         let intensity = lights[i].color_intensity.w;
         if !(intensity > 0.0) || !finite(intensity) { continue; }
         let light = lights[i];
+        // The analytic path emits from the primary camera's world. Light
+        // seen through another space reaches the lens through HDR extraction.
+        if light_space(light) != 0u { continue; }
         var to_light: vec3<f32>;
         var irradiance = intensity;
         // A directional light is infinitely far: the depth clear value.
@@ -365,7 +372,10 @@ fn cs_sources(@builtin(local_invocation_index) lid: u32) {
         if off_frame <= 0.0 { continue; }
         let on_screen_vis = depth_visibility(uv, 1.0 / size.x, light_depth, aspect);
         let lens_vis = shadow_visibility(light, eye);
-        let visibility = mix(on_screen_vis, lens_vis, off_frame);
+        let aperture_dims = vec2<f32>(textureDimensions(aperture_mask));
+        let aperture_at_source = all(uv >= vec2(0.0)) && all(uv < vec2(1.0))
+            && textureLoad(aperture_mask, vec2<i32>(uv * aperture_dims), 0).r != 0u;
+        let visibility = select(mix(on_screen_vis, lens_vis, off_frame), on_screen_vis, aperture_at_source);
         let weight = off_frame * visibility * field * light_gain * field_falloff(uv, aspect);
         let energy = light.color_intensity.rgb * irradiance / texel_solid_angle;
         if weight * luminance(energy) <= 1e-6 { continue; }
