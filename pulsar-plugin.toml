@@ -15,6 +15,7 @@ provides = [
 requires = [
   { id = "pulsar.lights.rows", optional = true },
   { id = "pulsar.lights.api", optional = true },
+  { id = "pulsar.portals.api", optional = true },
 ]
 
 # The plugin's root crate (the package in this directory): the one place it
