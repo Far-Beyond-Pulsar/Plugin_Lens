@@ -93,12 +93,12 @@ pub struct LensFlarePass {
     input_key: &'static str,
     /// The image the input may be a view of (`helio_frame_api::color::alias`).
     input_alias: Option<&'static str>,
-    control: wgpu::ComputePipeline,
-    extract: wgpu::ComputePipeline,
-    downsample: wgpu::ComputePipeline,
-    sources_pipeline: wgpu::ComputePipeline,
-    response: wgpu::ComputePipeline,
-    temporal: wgpu::ComputePipeline,
+    control: helio_core::shader::DeferredCompute,
+    extract: helio_core::shader::DeferredCompute,
+    downsample: helio_core::shader::DeferredCompute,
+    sources_pipeline: helio_core::shader::DeferredCompute,
+    response: helio_core::shader::DeferredCompute,
+    temporal: helio_core::shader::DeferredCompute,
     control_layout: wgpu::BindGroupLayout,
     image_layout: wgpu::BindGroupLayout,
     optics_layout: wgpu::BindGroupLayout,
@@ -318,7 +318,7 @@ impl LensFlarePass {
                 bind_group_layouts: layouts,
                 immediate_size: 0,
             });
-            helio_core::shader::create_compute_pipeline(
+            helio_core::shader::create_compute_pipeline_deferred(
                 &device,
                 wgpu::ComputePipelineDescriptor {
                     label: Some(entry),

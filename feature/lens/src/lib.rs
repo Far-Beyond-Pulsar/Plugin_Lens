@@ -298,7 +298,7 @@ struct Stage {
     entry: &'static str,
     label: &'static str,
     layout: wgpu::BindGroupLayout,
-    pipeline: wgpu::ComputePipeline,
+    pipeline: helio_core::shader::DeferredCompute,
 }
 
 fn storage(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
@@ -509,7 +509,7 @@ impl LensPass {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
-            let pipeline = helio_core::shader::create_compute_pipeline(
+            let pipeline = helio_core::shader::create_compute_pipeline_deferred(
                 &device,
                 wgpu::ComputePipelineDescriptor {
                     label: Some(label),
