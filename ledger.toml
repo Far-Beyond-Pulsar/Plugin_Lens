@@ -66,17 +66,17 @@ status = "unverified"
 
 [[buffer]]
 key = "camera_lenses"
-producers = []
+producers = ["LensComponent"]
 consumers = ["helio-pass-lens"]
 owner = "helio-scene-derivations environment join (execution output, one row per component instance)"
-disposition = "keep: the camera's lens, matched to its view by view_id; the first enabled row wins and none disables the lens. The join copies each placed, enabled lens's camera_lens_sources row (a LensComponent), so the instance switch turns the lens off"
+disposition = "keep: the camera's lens, matched to its view by view_id; the first enabled row wins and none disables the lens. The join copies each placed, enabled lens's camera_lens_sources row (a LensComponent), so the instance switch turns the lens off. helio_pass_lens::host_rows::LensComponent, which standalone hosts author, names the same buffer"
 target_contract = "Phase 6; 03-gpu-reflection-and-rendering.md"
 test = "plugins/vendor/lens/tests/camera_lens_rows.rs; crates/renderer/helio/crates/passes/3d/helio-pass-lens/src/tests.rs (resolve_matches_the_first_enabled_row_of_the_view)"
 status = "verified"
 
 [[buffer]]
 key = "lens_elements"
-producers = ["LensElementGpuRow"]
+producers = ["LensElementComponent", "LensElementGpuRow"]
 consumers = ["helio-pass-lens"]
 owner = "helio-pass-lens (the packed LensElementComponent column)"
 disposition = "keep: the optical elements a lens stacks, addressed by the lens's element_first and element_count; rows of kind NONE are inert"
